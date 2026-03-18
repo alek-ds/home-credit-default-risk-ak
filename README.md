@@ -3,7 +3,7 @@
 Author: Aleksander Kopera
 Data used: Anna Montoya, inversion, KirillOdintsov, and Martin Kotek. Home Credit Default Risk. https://kaggle.com/competitions/home-credit-default-risk, 2018. Kaggle.
 
-## Project Overwiev
+## Project Overview
 This project focuses on analysis of credit data in order to improve decion making by creting preditions of credit risk by classifying customers as good or bad.
 The final goal is to create an app that will intuitively improve credit acceptance process based on machine learning model.
 
@@ -43,4 +43,6 @@ conda activate home_credits_env
 ```
 
 ## Notes
-Raw data is not tracked in Git
+Raw data is not tracked in Git.
+The original data is provided with prior train-test split.
+This project will conduct analysis and modeling of train part (with custom train-split) and leave test data for demonstration of results. 
