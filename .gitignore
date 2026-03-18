@@ -1,0 +1,31 @@
+# Files and folders to ignore
+
+# Data
+data/raw
+data/processed
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python cache
+__pychache__/
+*.pyc
+
+# Envs
+.venv/
+venv/
+env/
+
+# Models
+models/
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.ckpt
+
+# Hidden/system/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
