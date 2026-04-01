@@ -8,6 +8,212 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
+#=======================================================================
+# Univariate analysis
+def plot_quantiative_distribution(
+        df: pd.DataFrame,
+        quant_var: str,
+        hist_bins: str | int = 'auto',
+        save_dir: Optional[str] = None,
+        plot_violin: bool = False
+) -> None:
+    """ 
+    Plots univariate distribution of a quantitative variable
+    Creates:
+        - histogram
+        - boxplot / violinplot
+    """
+
+    # Checks
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found")
+    if df[quant_var].dtype not in ['float64', 'float32', 'int64', 'int32']:
+        raise ValueError(f"Column '{quant_var}' has wrong dtype: {df[quant_var].dtype}")
+    
+    # Metrics
+    nans = df[quant_var].isna().sum()
+    df = df.dropna()
+    mean = df[quant_var].mean()
+    median = df[quant_var].median()
+
+    # Plots
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    # Histogram
+    sns.histplot(
+        data=df,
+        x=quant_var,
+        bins=hist_bins,
+        element="step",
+        stat="density",
+        common_norm=False,
+        ax=axes[0]
+    )
+    axes[0].set_title(f"Histogram of {quant_var}")
+    axes[0].set_xlabel(quant_var)
+    axes[0].set_ylabel("Density")
+
+    axes[0].axvline(mean, linestyle="--", linewidth=1.5, label=f"mean = {mean:.2f}")
+    axes[0].axvline(median, linestyle=":", linewidth=1.5, label=f"median = {median:.2f}")
+    axes[0].legend()
+
+    # Boxplot or violiplot
+    if not plot_violin:
+        # Boxplot
+        sns.boxplot(
+            data=df,
+            y=quant_var,
+            ax=axes[1]
+        )
+        axes[1].set_title(f"Boxplot of {quant_var}")
+        #axes[1].set_xlabel("")
+        axes[1].set_ylabel(quant_var)
+
+        plt.tight_layout()
+
+        # Violinplot
+        sns.violinplot(
+            data=df,
+            y=quant_var,
+            ax=axes[1]
+        )
+        axes[1].set_title(f"Violinplot of {quant_var}")
+        #axes[1].set_xlabel("")
+        axes[1].set_ylabel(quant_var)
+
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            plt.savefig(
+                os.path.join(save_dir, f"{quant_var}_distribution.png"),
+                dpi=300,
+                bbox_inches="tight"
+            )
+
+        plt.show()
+
+
+
+#=======================================================================
+# Bivariate analysis
+def quantitative_vs_binary(
+    df: pd.DataFrame,
+    quantitative_var: str,
+    binary_var: str,
+    hist_bins: str | int = "auto",
+    save_dir: Optional[str] = None
+) -> None:
+    """
+    Quick EDA function:
+    - histogram by binary group
+    - boxplot by binary group
+    - Mann-Whitney U test
+    - group medians displayed on plot
+    """
+
+    # Keep relevant columns and drop missing values
+    data = df[[quantitative_var, binary_var]].dropna().copy()
+
+    # Checks
+    if quantitative_var not in df.columns:
+        raise KeyError(f"Column '{quantitative_var}' not found.")
+    if binary_var not in df.columns:
+        raise KeyError(f"Column '{binary_var}' not found.")
+    if data[binary_var].nunique() != 2:
+        raise ValueError(f"'{binary_var}' must have exactly 2 non-null unique values.")
+
+    # Order groups
+    groups = sorted(data[binary_var].unique())
+    if set(groups) == {0, 1}:
+        groups = [0, 1]
+
+    g1, g2 = groups
+
+    x1 = data.loc[data[binary_var] == g1, quantitative_var]
+    x2 = data.loc[data[binary_var] == g2, quantitative_var]
+
+    # Metrics
+    median1 = x1.median()
+    median2 = x2.median()
+    median_diff = median2 - median1
+
+    stat, p_value = mannwhitneyu(x1, x2, alternative="two-sided")
+
+    # Plot
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    sns.histplot(
+        data=data,
+        x=quantitative_var,
+        hue=binary_var,
+        hue_order=groups,
+        bins=hist_bins,
+        element="step",
+        stat="density",
+        common_norm=False,
+        ax=axes[0]
+    )
+    axes[0].set_title(f"Histogram of {quantitative_var}")
+    axes[0].set_xlabel(quantitative_var)
+    axes[0].set_ylabel("Density")
+
+    axes[0].axvline(median1, linestyle="--", linewidth=1.5, label=f"{g1} median = {median1:.2f}")
+    axes[0].axvline(median2, linestyle=":", linewidth=1.5, label=f"{g2} median = {median2:.2f}")
+    axes[0].legend()
+
+    axes[0].text(
+        0.98,
+        0.95,
+        f"Mann-Whitney U p = {p_value:.3e}\nMedian diff ({g2}-{g1}) = {median_diff:.2f}",
+        transform=axes[0].transAxes,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
+    )
+
+    sns.boxplot(
+        data=data,
+        x=binary_var,
+        y=quantitative_var,
+        order=groups,
+        ax=axes[1]
+    )
+    axes[1].set_title(f"Boxplot of {quantitative_var} by {binary_var}")
+    axes[1].set_xlabel(binary_var)
+    axes[1].set_ylabel(quantitative_var)
+
+    fig.suptitle(f"{quantitative_var} vs {binary_var}", fontsize=13)
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{quantitative_var}_vs_{binary_var}.png"),
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+    plt.show()
+
+#=======================================================================
+# Multivariate analysis
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def filter_low_correlation(
     df: pd.DataFrame,
     target: str,
@@ -284,6 +490,8 @@ def plot_numeric_features(
         else:
             plt.show()
 
+
+
 def plot_binary_features(
     df: pd.DataFrame,
     target: str,
@@ -359,101 +567,3 @@ def plot_categorical_features(
 
 
 
-def quantitative_vs_binary(
-    df: pd.DataFrame,
-    quantitative_var: str,
-    binary_var: str,
-    hist_bins: str | int = "auto",
-    save_dir: Optional[str] = None
-) -> None:
-    """
-    Quick EDA function:
-    - histogram by binary group
-    - boxplot by binary group
-    - Mann-Whitney U test
-    - group medians displayed on plot
-    """
-
-    # Keep relevant columns and drop missing values
-    data = df[[quantitative_var, binary_var]].dropna().copy()
-
-    # Checks
-    if quantitative_var not in df.columns:
-        raise KeyError(f"Column '{quantitative_var}' not found.")
-    if binary_var not in df.columns:
-        raise KeyError(f"Column '{binary_var}' not found.")
-    if data[binary_var].nunique() != 2:
-        raise ValueError(f"'{binary_var}' must have exactly 2 non-null unique values.")
-
-    # Order groups
-    groups = sorted(data[binary_var].unique())
-    if set(groups) == {0, 1}:
-        groups = [0, 1]
-
-    g1, g2 = groups
-
-    x1 = data.loc[data[binary_var] == g1, quantitative_var]
-    x2 = data.loc[data[binary_var] == g2, quantitative_var]
-
-    # Metrics
-    median1 = x1.median()
-    median2 = x2.median()
-    median_diff = median2 - median1
-
-    stat, p_value = mannwhitneyu(x1, x2, alternative="two-sided")
-
-    # Plot
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-
-    sns.histplot(
-        data=data,
-        x=quantitative_var,
-        hue=binary_var,
-        hue_order=groups,
-        bins=hist_bins,
-        element="step",
-        stat="density",
-        common_norm=False,
-        ax=axes[0]
-    )
-    axes[0].set_title(f"Histogram of {quantitative_var}")
-    axes[0].set_xlabel(quantitative_var)
-    axes[0].set_ylabel("Density")
-
-    axes[0].axvline(median1, linestyle="--", linewidth=1.5, label=f"{g1} median = {median1:.2f}")
-    axes[0].axvline(median2, linestyle=":", linewidth=1.5, label=f"{g2} median = {median2:.2f}")
-    axes[0].legend()
-
-    axes[0].text(
-        0.98,
-        0.95,
-        f"Mann-Whitney U p = {p_value:.3e}\nMedian diff ({g2}-{g1}) = {median_diff:.2f}",
-        transform=axes[0].transAxes,
-        ha="right",
-        va="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
-    )
-
-    sns.boxplot(
-        data=data,
-        x=binary_var,
-        y=quantitative_var,
-        order=groups,
-        ax=axes[1]
-    )
-    axes[1].set_title(f"Boxplot of {quantitative_var} by {binary_var}")
-    axes[1].set_xlabel(binary_var)
-    axes[1].set_ylabel(quantitative_var)
-
-    fig.suptitle(f"{quantitative_var} vs {binary_var}", fontsize=13)
-    plt.tight_layout()
-
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        plt.savefig(
-            os.path.join(save_dir, f"{quantitative_var}_vs_{binary_var}.png"),
-            dpi=300,
-            bbox_inches="tight"
-        )
-
-    plt.show()
