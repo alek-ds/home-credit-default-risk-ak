@@ -3,19 +3,22 @@ import pandas as pd
 import numpy as np
 import os
 from typing import List, Literal, Optional, Any
-from scipy.stats import spearmanr, mannwhitneyu, kruskal, ttest_ind
+from scipy.stats import spearmanr, mannwhitneyu, kruskal, ttest_ind, chi2_contingency
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 import seaborn as sns
 
 
 #=======================================================================
 # Univariate analysis
-def plot_quantiative_distribution(
+def plot_quantitative_distribution(
         df: pd.DataFrame,
         quant_var: str,
         hist_bins: str | int = 'auto',
-        save_dir: Optional[str] = None,
-        plot_violin: bool = False
+        log_scale: bool = False,
+        show_outliers: bool = True,
+        plot_violin: bool = False,
+        save_dir: Optional[str] = None
 ) -> None:
     """ 
     Plots univariate distribution of a quantitative variable
@@ -27,21 +30,31 @@ def plot_quantiative_distribution(
     # Checks
     if quant_var not in df.columns:
         raise KeyError(f"Column '{quant_var}' not found")
-    if df[quant_var].dtype not in ['float64', 'float32', 'int64', 'int32']:
+    if not pd.api.types.is_numeric_dtype(df[quant_var]):
         raise ValueError(f"Column '{quant_var}' has wrong dtype: {df[quant_var].dtype}")
+    
     
     # Metrics
     nans = df[quant_var].isna().sum()
-    df = df.dropna()
-    mean = df[quant_var].mean()
-    median = df[quant_var].median()
+    nans_share = nans / df.shape[0]
+    plot_data = df[[quant_var]].dropna().copy()
+    mean = plot_data[quant_var].mean()
+    median = plot_data[quant_var].median()
+
+    if plot_data.empty:
+        raise ValueError(f"Column '{quant_var}' contains only missing values.")
+   
+    if log_scale and (plot_data[quant_var] <= 0).any():
+        raise ValueError(
+            f"log_scale=True requires all non-missing values of '{quant_var}' to be > 0."
+        )
 
     # Plots
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     # Histogram
     sns.histplot(
-        data=df,
+        data=plot_data,
         x=quant_var,
         bins=hist_bins,
         element="step",
@@ -57,45 +70,425 @@ def plot_quantiative_distribution(
     axes[0].axvline(median, linestyle=":", linewidth=1.5, label=f"median = {median:.2f}")
     axes[0].legend()
 
+    axes[0].text(
+        0.98,
+        0.95,
+        f"Missing: {nans} ({nans_share:.1%})",
+        transform=axes[0].transAxes,
+        ha='right',
+        va='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.85)
+    )
+
     # Boxplot or violiplot
-    if not plot_violin:
-        # Boxplot
-        sns.boxplot(
-            data=df,
-            y=quant_var,
-            ax=axes[1]
-        )
-        axes[1].set_title(f"Boxplot of {quant_var}")
-        #axes[1].set_xlabel("")
-        axes[1].set_ylabel(quant_var)
-
-        plt.tight_layout()
-
-        # Violinplot
+    if plot_violin:
         sns.violinplot(
-            data=df,
+            data=plot_data,
             y=quant_var,
             ax=axes[1]
         )
         axes[1].set_title(f"Violinplot of {quant_var}")
-        #axes[1].set_xlabel("")
-        axes[1].set_ylabel(quant_var)
+    else:
+        sns.boxplot(
+            data=plot_data,
+            y=quant_var,
+            showfliers=show_outliers,
+            ax=axes[1]
+        )
+        axes[1].set_title(f"Boxplot of {quant_var}")
 
-        if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            plt.savefig(
-                os.path.join(save_dir, f"{quant_var}_distribution.png"),
-                dpi=300,
-                bbox_inches="tight"
-            )
+    axes[1].set_ylabel(quant_var)
 
-        plt.show()
+    # Log scale
+    if log_scale:
+        axes[0].set_xscale("log")
+        axes[1].set_yscale("log")
+
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{quant_var}_distribution.png"),
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+    plt.show()
+
+
+def plot_categorical_distribution(
+        df: pd.DataFrame,
+        cat_var: str,
+        save_dir: Optional[str] = None,
+        top_n: Optional[int] = None
+) -> None:
+    """ 
+    Plots univariate distribution of a categorical variable
+    Creates:
+        - barplot of category counts
+    """
+
+    # Checks
+    if cat_var not in df.columns:
+        raise KeyError(f"Column '{cat_var}' not found")
+    if not (
+        pd.api.types.is_object_dtype(df[cat_var])
+        or pd.api.types.is_categorical_dtype(df[cat_var])
+    ):
+        raise ValueError(f"Column '{cat_var}' has wrong dtype: {df[cat_var].dtype}")
+    
+    if top_n is not None and top_n <= 0:
+        raise ValueError(f"top_n ({top_n}) must be a positive integer or None")
+
+    # Misssing metrics 
+    nans = df[cat_var].isna().sum()
+    nans_share = nans / len(df)
+    
+    plot_data = df[cat_var].astype("object").fillna('Missing').copy()
+    
+    if plot_data.empty:
+        raise ValueError(f"Column '{cat_var}' contains only missing values.")
+    
+    n_unique_non_missing = df[cat_var].nunique(dropna=True)
+    value_counts = plot_data.value_counts(dropna=False)
+
+    # Top-n handling
+    if top_n is not None and len(value_counts) > top_n:
+        missing_count = value_counts.get("Missing", 0)
+
+        non_missing_counts = value_counts.drop(index="Missing", errors="ignore")
+
+        if len(non_missing_counts) > top_n:
+            top_counts = non_missing_counts.iloc[:top_n]
+            other_count = non_missing_counts.iloc[top_n:].sum()
+
+            final_counts = top_counts.copy()
+            if other_count > 0:
+                final_counts.loc["Other"] = other_count
+        else:
+            final_counts = non_missing_counts.copy()
+
+        if missing_count > 0:
+            final_counts.loc["Missing"] = missing_count
+        
+        value_counts = final_counts
+    
+    mode = value_counts.index[0]
+    mode_count = value_counts.iloc[0]
+    mode_share = mode_count / len(plot_data)
+  
+    # Plot
+    fig, ax = plt.subplots(figsize=(10,5))
+
+    sns.barplot(
+        x=value_counts.values,
+        y=value_counts.index,
+        ax=ax
+    )
+
+    ax.set_title(f"Distribution of {cat_var}")
+    ax.set_xlabel(cat_var)
+    ax.set_ylabel("Count")
+    ax.tick_params(axis="x", rotation=45)
+
+    ax.text(
+        0.98,
+        0.95,
+        f"Missing: {nans} ({nans_share:.1%})\n"
+        f"Unique categories: {n_unique_non_missing}\n"
+        f"Mode: {mode} ({mode_share:.1%})",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
+    )
+    
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{cat_var}_distribution.png"),
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+    plt.show()
+
+
+
+def plot_binary_distribution(
+    df: pd.DataFrame,
+    binary_var: str,
+    save_dir: Optional[str] = None,
+    facecolor: str = "#FFFFFF",
+    colors: Optional[list[str]] = None
+) -> None:
+    """
+    Plot univariate distribution of a binary variable as donut chart(s).
+
+    Creates:
+    - one donut if there are no missing values
+    - two donuts if there are missing values:
+        * excluding missing
+        * including missing
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Source dataframe.
+    binary_var : str
+        Name of binary variable.
+    save_dir : str | None, default=None
+        Directory where plot should be saved.
+    facecolor : str, default="#FFFFFF"
+        Background color for figure and axes.
+    colors : list[str] | None, default=None
+        Colors for categories. If None, default matplotlib colors are used.
+    """
+
+    # Checks
+    if binary_var not in df.columns:
+        raise KeyError(f"Column '{binary_var}' not found")
+
+    non_missing = df[binary_var].dropna()
+    unique_vals = list(pd.unique(non_missing))
+
+    if len(unique_vals) != 2:
+        raise ValueError(
+            f"Column '{binary_var}' must have exactly 2 unique non-missing values. "
+            f"Found {len(unique_vals)}: {unique_vals}"
+        )
+
+    # Stable order
+    if set(unique_vals) == {0, 1}:
+        order = [0, 1]
+    elif set(unique_vals) == {"N", "Y"}:
+        order = ["N", "Y"]
+    else:
+        order = sorted(unique_vals)
+
+    nans = df[binary_var].isna().sum()
+    nans_share = nans / len(df)
+
+    counts_no_nan = non_missing.value_counts().reindex(order)
+
+    plot_series = df[binary_var].astype("object")
+    plot_series = plot_series.where(plot_series.notna(), "Missing")
+
+    counts_with_nan = plot_series.value_counts()
+
+    counts_with_nan = counts_with_nan.reindex(
+        order + (["Missing"] if nans > 0 else [])
+    )
+
+    # Default colors
+    if colors is None:
+        if nans > 0:
+            colors = ["#4C72B0", "#E72121", "#9A9A9A"]
+        else:
+            colors = ["#4C72B0", "#E72121"]
+
+    def make_legend_labels(counts: pd.Series) -> list[str]:
+        total = counts.sum()
+        return [
+            f"{idx} — {val} ({val / total:.1%})"
+            for idx, val in counts.items()
+        ]
+
+    def draw_donut(ax, counts: pd.Series, title: str, center_text: str, donut_colors: list[str]) -> None:
+        wedges, _, autotexts = ax.pie(
+            counts.values,
+            labels=None,
+            colors=donut_colors[:len(counts)],
+            startangle=90,
+            counterclock=False,
+            autopct=lambda p: f"{p:.1f}%" if p > 0 else "",
+            pctdistance=0.78,
+            wedgeprops=dict(width=0.38, edgecolor=facecolor, linewidth=3)
+        )
+
+        for autotext in autotexts:
+            autotext.set_color("black" if facecolor == "#FFFFFF" else "white")
+            autotext.set_fontsize(11)
+            autotext.set_weight("bold")
+
+        text_color = "black" if facecolor == "#FFFFFF" else "white"
+
+        ax.text(
+            0, 0.05, center_text,
+            ha="center", va="center",
+            fontsize=13, color=text_color, weight="bold"
+        )
+        ax.text(
+            0, -0.08, title,
+            ha="center", va="center",
+            fontsize=10, color=text_color
+        )
+
+        ax.set_title(title, fontsize=14, color=text_color, weight="bold", pad=16)
+
+        legend = ax.legend(
+            wedges,
+            make_legend_labels(counts),
+            loc="center left",
+            bbox_to_anchor=(1.0, 0.5),
+            frameon=False,
+            fontsize=10,
+            title="Categories",
+            title_fontsize=11
+        )
+        plt.setp(legend.get_texts(), color=text_color)
+        plt.setp(legend.get_title(), color=text_color)
+
+        ax.set_facecolor(facecolor)
+
+    # Figure layout
+    if nans > 0:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=facecolor)
+        axes = axes.ravel()
+
+        draw_donut(
+            ax=axes[0],
+            counts=counts_no_nan,
+            title="Excluding missing",
+            center_text=f"Distribution of \n{binary_var}",
+            donut_colors=colors
+        )
+
+        draw_donut(
+            ax=axes[1],
+            counts=counts_with_nan,
+            title="Including missing",
+            center_text=f"Distribution of \n{binary_var}",
+            donut_colors=colors
+        )
+
+        #title_text = f"Distribution of {binary_var} | Missing: {nans} ({nans_share:.1%})"
+    else:
+        fig, ax = plt.subplots(figsize=(8, 6), facecolor=facecolor)
+
+        draw_donut(
+            ax=ax,
+            counts=counts_no_nan,
+            #title="Binary distribution",
+            title='',
+            center_text=f"Distribution of \n{binary_var}",
+            donut_colors=colors
+        )
+
+        #title_text = f"Distribution of {binary_var}"
+
+    # fig.suptitle(
+    #     title_text,
+    #     fontsize=16,
+    #     color="black" if facecolor == "#FFFFFF" else "white",
+    #     weight="bold",
+    #     y=0.98
+    # )
+
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{binary_var}_binary_distribution.png"),
+            dpi=300,
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor()
+        )
+
+    plt.show()
+
+
+def plot_binary_distribution2(
+        df: pd.DataFrame,
+        binary_var: str,
+        save_dir: Optional[str] = None
+) -> None:
+    """
+    Plots univariate distribution of a binary variable
+    Creates:
+    - donut plot excluding missing values
+    - donut plot including missing values as a separate category
+    """
+
+    # Checks
+    if binary_var not in df.columns:
+        raise KeyError(f"Column '{binary_var}' not found")
+    
+    non_missing = df[binary_var].dropna()
+    unique_vals = list(pd.unique(non_missing))
+
+    if len(unique_vals) != 2:
+        raise ValueError(
+            f"Column '{binary_var}' must have exactly 2 unique non-missing values. "
+            f"Found {len(unique_vals)}: {unique_vals}"
+        )
+    
+        # Add ordering logic here
+    if set(unique_vals) == {0, 1}:
+        order = [0, 1]
+    elif set(unique_vals) == {"N", "Y"}:
+        order = ["N", "Y"]
+    else:
+        order = sorted(unique_vals)
+    
+    
+    # Counts excluding missing
+    counts_no_nan = non_missing.value_counts().reindex(order)
+    
+    # Counts including missing
+    counts_with_nan = df[binary_var].astype("object").fillna("Missing").value_counts()
+
+    nans = df[binary_var].isna().sum()
+    nans_share = nans/ len(df)
+
+    fig, axes = plt.subplots(1,2, figsize=(12,6))
+
+    # Donut 1: excluding missing
+    axes[0].pie(
+        counts_no_nan.values,
+        labels=counts_no_nan.index.astype(str),
+        autopct="%1.1f%%",
+        startangle=90,
+        wedgeprops=dict(width=0.4)
+    )
+    axes[0].set_title(f"{binary_var}\n(excluding missing)")
+
+    # Donut 2: including missing
+    axes[1].pie(
+        counts_with_nan.values,
+        labels=counts_with_nan.index.astype(str),
+        autopct="%1.1f%%",
+        startangle=90,
+        wedgeprops=dict(width=0.4)
+    )
+    axes[1].set_title(f"{binary_var}\n(including missing)")
+
+    fig.suptitle(
+        f"Distribution of {binary_var} | Missing: {nans} ({nans_share:.1%})",
+        fontsize=13
+    )
+
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{binary_var}_binary_distribution.png"),
+            dpi=300,
+            bbox_inches='tight'
+        )
+    
+    plt.show()
 
 
 
 #=======================================================================
 # Bivariate analysis
-def quantitative_vs_binary(
+def plot_quantitative_vs_binary(
     df: pd.DataFrame,
     quantitative_var: str,
     binary_var: str,
@@ -163,7 +556,7 @@ def quantitative_vs_binary(
     axes[0].text(
         0.98,
         0.95,
-        f"Mann-Whitney U p = {p_value:.3e}\nMedian diff ({g2}-{g1}) = {median_diff:.2f}",
+        f"Mann-Whitney U p-value = {p_value:.3e}\nMedian diff ({g2}-{g1}) = {median_diff:.2f}",
         transform=axes[0].transAxes,
         ha="right",
         va="top",
@@ -188,6 +581,140 @@ def quantitative_vs_binary(
         os.makedirs(save_dir, exist_ok=True)
         plt.savefig(
             os.path.join(save_dir, f"{quantitative_var}_vs_{binary_var}.png"),
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+    plt.show()
+
+
+def plot_binary_vs_binary(
+        df: pd.DataFrame,
+        binary_var: str,
+        target_var: str,
+        save_dir: Optional[str] = None
+) -> None:
+    """
+    Plots relationship between a binary variable and a binary target.
+
+    Creates:
+    - 100% stacked bar plot
+
+    Shows:
+    - chi-square p-value
+    - difference in target rate across categories ob binary_var
+    """
+
+    # Checks
+    for col in [binary_var, target_var]:
+        if col not in df.columns:
+            raise KeyError(f"Column '{col}' not found")
+    
+    plot_data = df[[binary_var, target_var]].dropna().copy()
+
+    if plot_data.empty:
+        raise ValueError("No complete cases available after dropping missing values")
+    
+    for col in [binary_var, target_var]:
+        n_unique = plot_data[col].nunique()
+        if n_unique != 2:
+            raise ValueError(
+                f"Column '{col}' must have exactly 2 unique non-missing values. Found {n_unique}."
+            )
+        
+    def get_binary_order(series: pd.Series) -> list[Any]:
+        unique_vals = list(pd.unique(series))
+
+        if set(unique_vals) == {0, 1}:
+            return [0, 1]
+        elif set(unique_vals) == {"N", "Y"}:
+            return ["N", "Y"]
+        else: 
+            return sorted(unique_vals)
+        
+    binary_order = get_binary_order(plot_data[binary_var])
+    target_order = get_binary_order(plot_data[target_var])
+
+    # Contigency table
+    counts = pd.crosstab(plot_data[binary_var], plot_data[target_var])
+    counts = counts.reindex(index=binary_order, columns=target_order, fill_value=0)
+
+    proportions = counts.div(counts.sum(axis=1), axis=0)
+
+    # Metrics
+    chi2, p_value, _, _ = chi2_contingency(counts)
+
+    positive_class = target_order[1]
+    target_rates = proportions[positive_class]
+    rate_diff_pp = (target_rates.iloc[1] - target_rates.iloc[0]) * 100
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    x_labels = proportions.index.astype(str)
+    x_pos = range(len(x_labels))
+
+    bottom = pd.Series(0.0, index=proportions.index)
+
+    class_colors = {
+        target_order[0]: "steelblue",
+        target_order[1]: "red"
+    }
+
+    for target_class in target_order:
+        heights = proportions[target_class]
+
+        ax.bar(
+            x_pos,
+            heights,
+            bottom=bottom,
+            label=f"{target_var} = {target_class}",
+            color=class_colors[target_class]
+        )
+
+        # Add percentage labels inside bar segments
+        for i, (idx, height) in enumerate(heights.items()):
+            if height > 0.03:
+                ax.text(
+                    i,
+                    bottom.loc[idx] + height / 2,
+                    f"{height:.1%}",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=10,
+                    fontweight="bold"
+                )
+
+        bottom += heights
+
+    ax.set_xticks(list(x_pos))
+    ax.set_xticklabels(x_labels)
+
+    ax.set_title(f"{binary_var} vs {target_var}")
+    ax.set_xlabel(binary_var)
+    ax.set_ylabel("")
+    ax.set_ylim(0,1)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=0))
+    ax.legend(title='')
+
+    ax.text(
+        0.98,
+        0.11,
+        f"Chi-square p_value = {p_value:.3e}\n"
+        f"{target_var}={positive_class} rate diff = {rate_diff_pp:.2f} pp",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
+    )
+
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{binary_var}_vs_{target_var}.png"),
             dpi=300,
             bbox_inches="tight"
         )
@@ -311,49 +838,6 @@ def show_correlations_with_target(
     
     return corr_df
 
-
-def plot_quantitative_distribution(
-    df: pd.DataFrame,
-    target: str,
-    save_dir: Optional[str] = None
-) -> None:
-    """
-    Creates visualization for a quantitative variable
-    - histogram with mean and median lines
-    - boxplot with mean and median lines
-    """
-
-    # Mean and median
-    mean_val = df[target].mean()
-    median_val = df[target].median()
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle(f"Quantitative variable: {target}", fontsize=14, fontweight="bold")
-
-    # Histogram
-    sns.histplot(df[target].dropna(), kde=True, ax=axes[0], color="skyblue")
-    axes[0].axvline(mean_val, color="red", linestyle="--", label=f"Mean = {mean_val:.2f}")
-    axes[0].axvline(median_val, color="green", linestyle=":", label=f"Median = {median_val:.2f}")
-    axes[0].set_title("Histogram")
-    axes[0].legend()
-
-    # Boxplot
-    sns.boxplot(x=df[target], ax=axes[1], color="lightgray")
-    axes[1].axvline(mean_val, color="red", linestyle="--", label=f"Mean = {mean_val:.2f}")
-    axes[1].axvline(median_val, color="green", linestyle=":", label=f"Median = {median_val:.2f}")
-    axes[1].set_title("Boxplot")
-    axes[1].legend()
-
-    plt.tight_layout()
-
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{target}_distribution.png")
-        plt.savefig(save_path)
-        plt.close(fig)
-        print(f"✅ Plot saved to: {save_path}")
-    else:
-        plt.show()
 
 
 
