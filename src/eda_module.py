@@ -194,7 +194,7 @@ def plot_categorical_distribution(
 
     ax.text(
         0.98,
-        0.95,
+        0.18,
         f"Missing: {nans} ({nans_share:.1%})\n"
         f"Unique categories: {n_unique_non_missing}\n"
         f"Mode: {mode} ({mode_share:.1%})",
@@ -490,7 +490,7 @@ def plot_binary_distribution2(
 # Bivariate analysis
 def plot_quantitative_vs_binary(
     df: pd.DataFrame,
-    quantitative_var: str,
+    quant_var: str,
     binary_var: str,
     hist_bins: str | int = "auto",
     save_dir: Optional[str] = None
@@ -504,11 +504,11 @@ def plot_quantitative_vs_binary(
     """
 
     # Keep relevant columns and drop missing values
-    data = df[[quantitative_var, binary_var]].dropna().copy()
+    data = df[[quant_var, binary_var]].dropna().copy()
 
     # Checks
-    if quantitative_var not in df.columns:
-        raise KeyError(f"Column '{quantitative_var}' not found.")
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
     if binary_var not in df.columns:
         raise KeyError(f"Column '{binary_var}' not found.")
     if data[binary_var].nunique() != 2:
@@ -521,8 +521,8 @@ def plot_quantitative_vs_binary(
 
     g1, g2 = groups
 
-    x1 = data.loc[data[binary_var] == g1, quantitative_var]
-    x2 = data.loc[data[binary_var] == g2, quantitative_var]
+    x1 = data.loc[data[binary_var] == g1, quant_var]
+    x2 = data.loc[data[binary_var] == g2, quant_var]
 
     # Metrics
     median1 = x1.median()
@@ -536,7 +536,7 @@ def plot_quantitative_vs_binary(
 
     sns.histplot(
         data=data,
-        x=quantitative_var,
+        x=quant_var,
         hue=binary_var,
         hue_order=groups,
         bins=hist_bins,
@@ -545,8 +545,8 @@ def plot_quantitative_vs_binary(
         common_norm=False,
         ax=axes[0]
     )
-    axes[0].set_title(f"Histogram of {quantitative_var}")
-    axes[0].set_xlabel(quantitative_var)
+    axes[0].set_title(f"Histogram of {quant_var}")
+    axes[0].set_xlabel(quant_var)
     axes[0].set_ylabel("Density")
 
     axes[0].axvline(median1, linestyle="--", linewidth=1.5, label=f"{g1} median = {median1:.2f}")
@@ -566,21 +566,21 @@ def plot_quantitative_vs_binary(
     sns.boxplot(
         data=data,
         x=binary_var,
-        y=quantitative_var,
+        y=quant_var,
         order=groups,
         ax=axes[1]
     )
-    axes[1].set_title(f"Boxplot of {quantitative_var} by {binary_var}")
+    axes[1].set_title(f"Boxplot of {quant_var} by {binary_var}")
     axes[1].set_xlabel(binary_var)
-    axes[1].set_ylabel(quantitative_var)
+    axes[1].set_ylabel(quant_var)
 
-    fig.suptitle(f"{quantitative_var} vs {binary_var}", fontsize=13)
+    fig.suptitle(f"{quant_var} vs {binary_var}", fontsize=13)
     plt.tight_layout()
 
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
         plt.savefig(
-            os.path.join(save_dir, f"{quantitative_var}_vs_{binary_var}.png"),
+            os.path.join(save_dir, f"{quant_var}_vs_{binary_var}.png"),
             dpi=300,
             bbox_inches="tight"
         )
@@ -715,6 +715,181 @@ def plot_binary_vs_binary(
         os.makedirs(save_dir, exist_ok=True)
         plt.savefig(
             os.path.join(save_dir, f"{binary_var}_vs_{target_var}.png"),
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+    plt.show()
+
+
+
+def plot_categorical_vs_binary(
+    df: pd.DataFrame,
+    cat_var: str,
+    target_var: str,
+    top_n: Optional[int] = None,
+    save_dir: Optional[str] = None
+) -> None:
+    """
+    Plot relationship between a categorical variable and a binary target.
+
+    Creates:
+    - 100% stacked bar plot
+
+    Shows:
+    - chi-square p-value
+    - range of target rate across categories
+
+    Notes
+    -----
+    Missing values in cat_var are treated as a separate category: 'Missing'.
+    If top_n is provided, only the top_n most frequent non-missing categories
+    are shown, remaining non-missing categories are grouped as 'Other'.
+    """
+
+    # Checks
+    for col in [cat_var, target_var]:
+        if col not in df.columns:
+            raise KeyError(f"Column '{col}' not found")
+
+    if top_n is not None and top_n <= 0:
+        raise ValueError("top_n must be a positive integer or None")
+
+    # Target must be binary (ignoring NaNs)
+    target_non_missing = df[target_var].dropna()
+    if target_non_missing.nunique() != 2:
+        raise ValueError(
+            f"Column '{target_var}' must have exactly 2 unique non-missing values. "
+            f"Found {target_non_missing.nunique()}."
+        )
+
+    def get_binary_order(series: pd.Series) -> list[Any]:
+        unique_vals = list(pd.unique(series.dropna()))
+        if set(unique_vals) == {0, 1}:
+            return [0, 1]
+        elif set(unique_vals) == {"N", "Y"}:
+            return ["N", "Y"]
+        else:
+            return sorted(unique_vals)
+
+    target_order = get_binary_order(df[target_var])
+
+    # Keep only rows with non-missing target
+    plot_data = df[[cat_var, target_var]].copy()
+    plot_data = plot_data[plot_data[target_var].notna()].copy()
+
+    if plot_data.empty:
+        raise ValueError("No rows with non-missing target available.")
+
+    # Treat missing categorical values as category
+    plot_data[cat_var] = plot_data[cat_var].astype("object")
+    plot_data[cat_var] = plot_data[cat_var].where(plot_data[cat_var].notna(), "Missing")
+
+    # Apply top_n logic while preserving Missing
+    cat_counts = plot_data[cat_var].value_counts()
+
+    if top_n is not None:
+        missing_count = cat_counts.get("Missing", 0)
+        non_missing_counts = cat_counts.drop(index="Missing", errors="ignore")
+
+        if len(non_missing_counts) > top_n:
+            top_counts = non_missing_counts.iloc[:top_n]
+            other_count = non_missing_counts.iloc[top_n:].sum()
+
+            kept_categories = list(top_counts.index)
+            plot_data.loc[~plot_data[cat_var].isin(kept_categories + ["Missing"]), cat_var] = "Other"
+
+    # Recompute counts after possible grouping
+    cat_counts = plot_data[cat_var].value_counts()
+
+    # Category order
+    if "Missing" in cat_counts.index:
+        non_missing_order = [cat for cat in cat_counts.index if cat != "Missing"]
+        category_order = non_missing_order + ["Missing"]
+    else:
+        category_order = list(cat_counts.index)
+
+    # Contingency table
+    counts = pd.crosstab(plot_data[cat_var], plot_data[target_var])
+    counts = counts.reindex(index=category_order, columns=target_order, fill_value=0)
+
+    proportions = counts.div(counts.sum(axis=1), axis=0)
+
+    # Metrics
+    chi2, p_value, _, _ = chi2_contingency(counts)
+
+    positive_class = target_order[1]
+    target_rates = proportions[positive_class]
+    rate_range_pp = (target_rates.max() - target_rates.min()) * 100
+
+    # Colors
+    class_colors = {
+        target_order[0]: "steelblue",
+        target_order[1]: "red"
+    }
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    x_labels = proportions.index.astype(str)
+    x_pos = range(len(x_labels))
+
+    bottom = pd.Series(0.0, index=proportions.index)
+
+    for target_class in target_order:
+        heights = proportions[target_class]
+
+        ax.bar(
+            x_pos,
+            heights,
+            bottom=bottom,
+            label=f"{target_var} = {target_class}",
+            color=class_colors[target_class]
+        )
+
+        # Add percentage labels inside bar segments
+        for i, (idx, height) in enumerate(heights.items()):
+            if height > 0.03:
+                ax.text(
+                    i,
+                    bottom.loc[idx] + height / 2,
+                    f"{height:.1%}",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=9,
+                    fontweight="bold"
+                )
+
+        bottom += heights
+
+    ax.set_xticks(list(x_pos))
+    ax.set_xticklabels(x_labels, rotation=45, ha="right")
+
+    ax.set_title(f"{cat_var} vs {target_var}")
+    ax.set_xlabel(cat_var)
+    ax.set_ylabel("")
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1, decimals=0))
+    ax.legend(title=target_var)
+
+    ax.text(
+        0.98,
+        0.12,
+        f"Chi-square p = {p_value:.3e}\n"
+        f"{target_var}={positive_class} rate range = {rate_range_pp:.2f} pp",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
+    )
+
+    plt.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(
+            os.path.join(save_dir, f"{cat_var}_vs_{target_var}.png"),
             dpi=300,
             bbox_inches="tight"
         )
