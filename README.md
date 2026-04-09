@@ -26,11 +26,13 @@ The project is in early-stage:
 ## Project structure
 ```text
 home_credit_default_risk/
-├── data/
-├── notebooks/
-├── src/
-├── models/
 ├── app/
+├── data/
+├── models/
+├── notebooks/
+├── reports/
+├── src/
+├── tests/
 ├── .gitignore
 ├── environment.yml
 └── README.md
@@ -46,3 +48,13 @@ conda activate home_credits_env
 Raw data is not tracked in Git.
 The original data is provided with prior train-test split.
 This project will conduct analysis and modeling of train part (with custom train-split) and leave test data for demonstration of results. 
+
+## Notebooks
+Notebooks contain logic behind conducted exploratory analysis and feature engineering. For each data set in this project there are number of notebooks which name starts with relevant prefix (e.g. application_train.csv -> app_...)
+- application_train.csv
+    - app_col_review_missing_analysis - quick review of columns and analysis of variables with substantial number of NAN values in 'application_train.csv'
+    - app_univariate_bivariate_app_process - analysis of application (Application Process) data
+    - app_univariate_bivariate_documents_provided - analysis of application (documentation) data
+    - app_univariate_bivariate_loan - analysis of application (loan) data
+- bureau.csv
+    - bureau_col_review_missing_analysis
