@@ -1,6 +1,7 @@
 import operator
 import numpy as np
 import pandas as pd
+from typing import List
 
 
 def _build_invalid_mask(
@@ -208,3 +209,106 @@ def create_imputed_quantitative_features(
     if return_summary:
         return df_out, summary_df
     return df_out
+
+
+
+from typing import List, Tuple, Union
+import pandas as pd
+
+
+def filter_binary_features(
+    df: pd.DataFrame,
+    binary_cols: List[str],
+    minimum_share: float = 0.05,
+    return_homogeneous_cols: bool = False,
+    dropna: bool = True,
+    return_summary: bool = True
+) -> Union[List[str], Tuple[List[str], pd.DataFrame]]:
+    """
+    Filter binary features by the minimum share of the less frequent category.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    binary_cols : List[str]
+        List of columns expected to be binary.
+    minimum_share : float, default=0.05
+        Minimum allowed share of the less frequent category.
+        Columns with smaller minority share are treated as homogeneous.
+    return_homogeneous_cols : bool, default=False
+        If False, return columns that pass the filter.
+        If True, return columns that fail the filter.
+    dropna : bool, default=True
+        Whether to exclude missing values when calculating category shares.
+    return_summary : bool, default=True
+        Whether to also return a summary dataframe.
+
+    Returns
+    -------
+    List[str]
+        Filtered list of column names.
+
+    or
+
+    Tuple[List[str], pd.DataFrame]
+        Filtered list of column names and summary dataframe.
+    """
+
+    if not 0 <= minimum_share <= 0.5:
+        raise ValueError("minimum_share must be between 0 and 0.5")
+
+    missing_cols = [col for col in binary_cols if col not in df.columns]
+    if missing_cols:
+        raise KeyError(f"Columns not found: {missing_cols}")
+
+    homogeneous_cols = []
+    heterogeneous_cols = []
+    summary_rows = []
+
+    for col in binary_cols:
+        value_counts = df[col].value_counts(dropna=dropna)
+        n_unique = len(value_counts)
+
+        if n_unique < 2:
+            minority_category = value_counts.index[0] if n_unique == 1 else None
+            minority_share = 0.0
+            keep = False
+            homogeneous_cols.append(col)
+
+        elif n_unique > 2:
+            raise ValueError(
+                f"Column '{col}' is not binary. Found {n_unique} unique values."
+            )
+
+        else:
+            minority_category = value_counts.idxmin()
+            minority_share = value_counts.min() / value_counts.sum()
+            keep = minority_share >= minimum_share
+
+            if keep:
+                heterogeneous_cols.append(col)
+            else:
+                homogeneous_cols.append(col)
+
+        summary_rows.append({
+            "feature": col,
+            "n_unique_observed": n_unique,
+            "minority_category": minority_category,
+            "minority_share": minority_share,
+            "minimum_share": minimum_share,
+            "keep": keep
+        })
+
+    selected_cols = homogeneous_cols if return_homogeneous_cols else heterogeneous_cols
+
+    if return_summary:
+        summary_df = pd.DataFrame(summary_rows).sort_values(
+            by=["keep", "minority_share", "feature"],
+            ascending=[True, True, True]
+        ).reset_index(drop=True)
+        return selected_cols, summary_df
+
+    return selected_cols
+
+

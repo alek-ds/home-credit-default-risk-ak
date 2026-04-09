@@ -378,15 +378,7 @@ def plot_binary_distribution(
             donut_colors=colors
         )
 
-        #title_text = f"Distribution of {binary_var}"
 
-    # fig.suptitle(
-    #     title_text,
-    #     fontsize=16,
-    #     color="black" if facecolor == "#FFFFFF" else "white",
-    #     weight="bold",
-    #     y=0.98
-    # )
 
     plt.tight_layout()
 
@@ -545,6 +537,10 @@ def plot_quantitative_vs_binary(
         common_norm=False,
         ax=axes[0]
     )
+
+    current_ymax = axes[0].get_ylim()[1]
+    axes[0].set_ylim(0, current_ymax * 1.15)
+
     axes[0].set_title(f"Histogram of {quant_var}")
     axes[0].set_xlabel(quant_var)
     axes[0].set_ylabel("Density")
