@@ -180,7 +180,7 @@ def create_imputed_quantitative_features(
                 "filled_count": int(filled_now),
             })
 
-            df_out = df_out.drop(columns="_Filla_value")
+            df_out = df_out.drop(columns="_fill_value")
 
         global_fill = getattr(df_out[clean_col], method)()
         na_before_global = df_out[output_col].isna().sum()
