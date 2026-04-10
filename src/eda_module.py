@@ -188,8 +188,8 @@ def plot_categorical_distribution(
     )
 
     ax.set_title(f"Distribution of {cat_var}")
-    ax.set_xlabel(cat_var)
-    ax.set_ylabel("Count")
+    ax.set_ylabel(cat_var)
+    ax.set_xlabel("Count")
     ax.tick_params(axis="x", rotation=45)
 
     ax.text(

@@ -1,7 +1,7 @@
 import operator
 import numpy as np
 import pandas as pd
-from typing import List
+from typing import List, Tuple, Union
 
 
 def _build_invalid_mask(
@@ -209,11 +209,6 @@ def create_imputed_quantitative_features(
     if return_summary:
         return df_out, summary_df
     return df_out
-
-
-
-from typing import List, Tuple, Union
-import pandas as pd
 
 
 def filter_binary_features(

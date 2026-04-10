@@ -50,7 +50,7 @@ The original data is provided with prior train-test split.
 This project will conduct analysis and modeling of train part (with custom train-split) and leave test data for demonstration of results. 
 
 ## Notebooks
-Notebooks contain logic behind conducted exploratory analysis and feature engineering. For each data set in this project there are number of notebooks which name starts with relevant prefix (e.g. application_train.csv -> app_...)
+Notebooks contain logic behind conducted exploratory analysis and feature engineering. For each data set in this project there are number of notebooks which name starts with relevant prefix (e.g. application_train.csv -> app_...).
 - application_train.csv
     - app_col_review_missing_analysis - quick review of columns and analysis of variables with substantial number of NAN values in 'application_train.csv'
     - app_univariate_bivariate_app_process - analysis of application (Application Process) data
@@ -58,3 +58,8 @@ Notebooks contain logic behind conducted exploratory analysis and feature engine
     - app_univariate_bivariate_loan - analysis of application (loan) data
 - bureau.csv
     - bureau_col_review_missing_analysis
+
+## src .py files
+These files contain all the necessary code to perform analysis and automatize whole pipeline.
+- eda_module.py - funtions for exploratory data analysis
+- preprocess_module - functions for data preprocessing
