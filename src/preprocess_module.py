@@ -381,8 +381,8 @@ def filter_high_nans_cols(
 def drop_obs_with_nans_in_low_nan_cols(
     df: pd.DataFrame,
     max_nan_share: float = 0.05,
-    return_dropped_cols_summary: bool = False,
-    return_kept_cols_summary: bool = False,
+    return_filtering_cols_summary: bool = False,
+    return_remaining_nan_cols_summary: bool = False,
     return_row_summary: bool = True
 ) -> Union[
     pd.DataFrame,
@@ -439,8 +439,8 @@ def drop_obs_with_nans_in_low_nan_cols(
     remaining_nan_shares = df_out.isna().mean()
     remaining_nan_shares = remaining_nan_shares[remaining_nan_shares > 0]
 
-    n_rows_before = len(df)
-    n_rows_after = len(df_out)
+    n_rows_before = int(len(df))
+    n_rows_after = int(len(df_out))
     n_rows_dropped = n_rows_before - n_rows_after
     rows_dropped_share = n_rows_dropped / n_rows_before
 
@@ -453,10 +453,10 @@ def drop_obs_with_nans_in_low_nan_cols(
 
     outputs = [df_out]
 
-    if return_dropped_cols_summary:
+    if return_filtering_cols_summary:
         outputs.append(cols_used_for_filtering.sort_values())
 
-    if return_kept_cols_summary:
+    if return_remaining_nan_cols_summary:
         outputs.append(remaining_nan_shares.sort_values())
 
     if return_row_summary:
