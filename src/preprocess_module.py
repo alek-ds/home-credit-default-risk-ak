@@ -376,3 +376,93 @@ def filter_high_nans_cols(
         return outputs[0]
     
     return tuple(outputs)
+
+
+def drop_obs_with_nans_in_low_nan_cols(
+    df: pd.DataFrame,
+    max_nan_share: float = 0.05,
+    return_dropped_cols_summary: bool = False,
+    return_kept_cols_summary: bool = False,
+    return_row_summary: bool = True
+) -> Union[
+    pd.DataFrame,
+    Tuple[pd.DataFrame, pd.Series],
+    Tuple[pd.DataFrame, pd.Series, pd.Series],
+    Tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]
+]:
+    """
+    Drop observations with missing values in columns whose NaN share is
+    greater than 0 and less than or equal to max_nan_share.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    max_nan_share : float, default=0.05
+        Maximum NaN share for a column to be treated as 'low-missing'.
+        Rows with NaNs in such columns are dropped.
+    return_dropped_cols_summary : bool, default=False
+        Whether to return NaN shares for columns used to filter rows.
+    return_kept_cols_summary : bool, default=False
+        Whether to return NaN shares of columns with remaining NaNs after filtering.
+    return_row_summary : bool, default=True
+        Whether to return summary of rows affected by the function.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe after dropping observations.
+
+    Optionally also returns
+    -----------------------
+    pd.Series
+        NaN shares of low-missing columns used for row filtering.
+    pd.Series
+        NaN shares of columns still containing NaNs after filtering.
+    pd.Series
+        Summary of number and share of rows dropped.
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    
+    if not 0 <= max_nan_share <= 1:
+        raise ValueError("max_nan_share must be between 0 and 1")
+
+    nan_shares = df.isna().mean()
+    cols_used_for_filtering = nan_shares[(nan_shares > 0) & (nan_shares <= max_nan_share)]
+
+    df_out = df.dropna(axis=0, subset=cols_used_for_filtering.index)
+
+    remaining_nan_shares = df_out.isna().mean()
+    remaining_nan_shares = remaining_nan_shares[remaining_nan_shares > 0]
+
+    n_rows_before = len(df)
+    n_rows_after = len(df_out)
+    n_rows_dropped = n_rows_before - n_rows_after
+    rows_dropped_share = n_rows_dropped / n_rows_before
+
+    row_summary = pd.Series({
+        "n_rows_before": n_rows_before,
+        "n_rows_after": n_rows_after,
+        "n_rows_dropped": n_rows_dropped,
+        "rows_dropped_share": rows_dropped_share
+    })
+
+    outputs = [df_out]
+
+    if return_dropped_cols_summary:
+        outputs.append(cols_used_for_filtering.sort_values())
+
+    if return_kept_cols_summary:
+        outputs.append(remaining_nan_shares.sort_values())
+
+    if return_row_summary:
+        outputs.append(row_summary)
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
