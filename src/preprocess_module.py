@@ -1,7 +1,7 @@
 import operator
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 
 
 def _build_invalid_mask(
@@ -307,3 +307,72 @@ def filter_binary_features(
     return selected_cols
 
 
+def filter_nans(
+        df: pd.DataFrame,
+        max_nans_share: float = 0.45,
+        return_dropped_cols: bool = False,
+        return_summary: bool = True
+) -> Union[
+    pd.DataFrame,
+    Tuple[pd.DataFrame, List[str]],
+    Tuple[pd.DataFrame, pd.DataFrame],
+    Tuple[pd.DataFrame, List[str], pd.DataFrame]
+]:
+    
+    """
+    Filter columns by maximum allowed share of missing values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    max_nans_share : float, default=0.45
+        Maximum allowed share of NaN values in a column.
+        Columns with missing share greater than this threshold are dropped.
+    return_dropped_cols : bool, default=False
+        Whether to also return the list of dropped columns.
+    return_summary : bool, default=True
+        Whether to also return a summary dataframe.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered dataframe.
+
+    Optionally also returns:
+    - List[str]: dropped columns
+    - pd.DataFrame: summary dataframe
+    """
+
+    if not 0 <= max_nans_share <= 1:
+        raise ValueError("max_nan_share must be between 0.01 and 0.99")
+    
+    nan_share = df.isna().mean()
+
+    kept_cols = nan_share[nan_share <= max_nans_share].index.tolist()
+    dropped_cols = nan_share[nan_share > max_nans_share].index.tolist()
+
+    filtered_df = df[kept_cols].copy()
+
+    summary_df = pd.DataFrame({
+        "feature": df.columns,
+        "nan_share": nan_share.values,
+        "max_nans_share": max_nans_share,
+        "keep": [col in kept_cols for col in df.columns]
+    }).sort_values(
+        by = ["keep", "nan_share", "feature"],
+        ascending = [True, False, True]
+    ).reset_index(drop=True)
+
+    outputs = [filtered_df]
+
+    if return_dropped_cols:
+        outputs.append(dropped_cols)
+
+    if return_summary:
+        outputs.append(summary_df)
+    
+    if len(outputs) == 1:
+        return outputs[0]
+    
+    return tuple(outputs)
