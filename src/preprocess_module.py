@@ -307,7 +307,7 @@ def filter_binary_features(
     return selected_cols
 
 
-def filter_nans(
+def filter_high_nans_cols(
         df: pd.DataFrame,
         max_nans_share: float = 0.45,
         return_dropped_cols: bool = False,
