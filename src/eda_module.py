@@ -374,7 +374,7 @@ def plot_binary_distribution(
             counts=counts_no_nan,
             #title="Binary distribution",
             title='',
-            center_text=f"Distribution of \n{binary_var}",
+            center_text=f"Distribution of \n{binary_var}\n Missing: {nans}",
             donut_colors=colors
         )
 
