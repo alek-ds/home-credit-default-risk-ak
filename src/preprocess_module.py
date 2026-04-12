@@ -468,10 +468,6 @@ def drop_obs_with_nans_in_low_nan_cols(
     return tuple(outputs)
 
 
-from typing import Union, Tuple
-import pandas as pd
-
-
 def trim_quantitative_var(
     df: pd.DataFrame,
     quant_var: str,
@@ -501,7 +497,7 @@ def trim_quantitative_var(
     if not 0 <= lower < upper <= 1:
         raise ValueError("Require 0 <= lower < upper <= 1.")
     
-    df = df.dropna()
+    df = df.dropna(subset=[quant_var])
 
     lower_bound = df[quant_var].quantile(lower)
     upper_bound = df[quant_var].quantile(upper)
