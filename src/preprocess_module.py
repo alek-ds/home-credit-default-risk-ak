@@ -466,3 +466,76 @@ def drop_obs_with_nans_in_low_nan_cols(
         return outputs[0]
 
     return tuple(outputs)
+
+
+from typing import Union, Tuple
+import pandas as pd
+
+
+def trim_quantitative_var(
+    df: pd.DataFrame,
+    quant_var: str,
+    lower: float = 0.025,
+    upper: float = 0.975,
+    return_trimmed_df: bool = False,
+    return_summary: bool = False
+) -> Union[
+    pd.Series,
+    Tuple[pd.Series, pd.DataFrame],
+    Tuple[pd.Series, pd.DataFrame, pd.Series]
+]:
+    """
+    Drop observations outside the [lower, upper] quantile interval
+    of a quantitative variable.
+
+    By default the interval is [2.5%, 97.5%].
+    Rows with missing values in quant_var are also excluded.
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+    if not 0 <= lower < upper <= 1:
+        raise ValueError("Require 0 <= lower < upper <= 1.")
+    
+    df = df.dropna()
+
+    lower_bound = df[quant_var].quantile(lower)
+    upper_bound = df[quant_var].quantile(upper)
+
+    mask = df[quant_var].between(lower_bound, upper_bound)
+    trimmed_df = df[mask]
+
+    n_rows_before = len(df)
+    n_rows_after = len(trimmed_df)
+    n_rows_dropped = n_rows_before - n_rows_after
+
+    summary = pd.Series({
+        "quant_var": quant_var,
+        "lower_quantile": lower,
+        "upper_quantile": upper,
+        "lower_bound": lower_bound,
+        "upper_bound": upper_bound,
+        "n_rows_before": n_rows_before,
+        "n_rows_after": n_rows_after,
+        "n_rows_dropped": n_rows_dropped,
+        "rows_dropped_share": n_rows_dropped / n_rows_before,
+        "n_dropped_from_lower": (df[quant_var] < lower_bound).sum(),
+        "n_dropped_from_upper": (df[quant_var] > upper_bound).sum(),
+        "n_missing_in_var": df[quant_var].isna().sum(),
+    })
+
+    outputs = [trimmed_df[quant_var]]
+
+    if return_trimmed_df:
+        outputs.append(trimmed_df)
+    if return_summary:
+        outputs.append(summary)
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
