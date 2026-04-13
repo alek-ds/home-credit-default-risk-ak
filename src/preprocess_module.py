@@ -535,3 +535,113 @@ def trim_quantitative_var(
         return outputs[0]
 
     return tuple(outputs)
+
+
+
+def cap_quantitative_var(
+    df: pd.DataFrame,
+    quant_var: str,
+    cap_quantile: float = 0.90,
+    return_capped_var: bool = True,
+    return_capped_df: bool = False,
+    drop_original_var: bool = False,
+    return_summary: bool = False
+) -> Union[
+    pd.Series,
+    pd.DataFrame,
+    pd.Series,
+    Tuple[pd.Series, pd.DataFrame],
+    Tuple[pd.Series, pd.Series],
+    Tuple[pd.DataFrame, pd.Series],
+    Tuple[pd.Series, pd.DataFrame, pd.Series]
+]:
+    """
+    Cap values of a quantitative variable above a specified quantile.
+
+    Values greater than the quantile threshold are replaced with the value
+    of that quantile. Missing values are preserved.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    quant_var : str
+        Quantitative variable to cap.
+    cap_quantile : float, default=0.90
+        Quantile used to define the upper cap. Must satisfy 0 < cap_quantile < 1.
+    return_capped_var : bool, default=True
+        Whether to return the capped variable as a Series.
+    return_capped_df : bool, default=False
+        Whether to return a dataframe with the capped variable added.
+    drop_original_var : bool, default=False
+        Whether to drop the original variable from the returned dataframe.
+        Used only when return_capped_df=True.
+    return_summary : bool, default=False
+        Whether to return a summary of the capping operation.
+
+    Returns
+    -------
+    pd.Series
+        Capped variable.
+
+    Optionally also returns
+    -----------------------
+    pd.DataFrame
+        Dataframe with capped variable added.
+    pd.Series
+        Summary of the capping operation.
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+    if not 0 < cap_quantile < 1:
+        raise ValueError("Require 0 < cap_quantile < 1.")
+    
+    df_out = df.copy()
+
+    upper_bound = df[quant_var].quantile(cap_quantile)
+    capped_col = f"{quant_var}_capped_{str(cap_quantile).replace('.', '_')}"
+
+    df_out[capped_col] = df_out[quant_var].clip(upper=upper_bound)
+
+    n_non_missing = df_out[quant_var].notna().sum()
+    n_rows_capped = (df_out[quant_var] > upper_bound).sum()
+
+    summary = pd.Series({
+        "quant_var": quant_var,
+        "capped_col": capped_col,
+        "cap_quantile": cap_quantile,
+        "upper_bound": upper_bound,
+        "n_rows_total": len(df_out),
+        "n_non_missing": int(n_non_missing),
+        "n_missing_in_var": int(df_out[quant_var].isna().sum()),
+        "n_rows_capped": int(n_rows_capped),
+        "rows_capped_share_total": n_rows_capped / len(df_out),
+        "rows_capped_share_non_missing": n_rows_capped / n_non_missing if n_non_missing > 0 else np.nan,
+    })
+
+    outputs = []
+
+    if return_capped_var:
+        outputs.append(df_out[capped_col])
+
+    if return_capped_df:
+        if drop_original_var:
+            outputs.append(df_out.drop(columns=[quant_var]))
+        else:
+            outputs.append(df_out)
+
+    if return_summary:
+        outputs.append(summary)
+
+    if len(outputs) == 0:
+        return df_out[capped_col]
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
