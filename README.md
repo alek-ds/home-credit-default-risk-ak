@@ -57,7 +57,7 @@ Notebooks contain logic behind conducted exploratory analysis and feature engine
     - app_univariate_bivariate_documents_provided - analysis of documentation data
     - app_univariate_bivariate_loan - analysis of loan data
     - app_univariate_bivariate_financial_material - analysis of financial and material data
-    - app_univariate_bivariate_family_demografic - analysis of familiy and demografic data
+    - app_univariate_bivariate_family_demographic - analysis of familiy and demographic data
     - app_multivariate - multivarate analysis for application data
     - app_preprocessing - preprocessing of application data
 - bureau.csv
