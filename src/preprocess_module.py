@@ -645,3 +645,94 @@ def cap_quantitative_var(
         return outputs[0]
 
     return tuple(outputs)
+
+
+def categorical_target_summary(
+    df: pd.DataFrame,
+    cat_var: str,
+    target_var: str,
+    include_missing: bool = True,
+    sort_by_count: bool = True
+) -> pd.DataFrame:
+    """
+    Return a summary table for a categorical variable with:
+    - category counts
+    - category share in dataset
+    - TARGET value counts
+    - TARGET value shares within each category
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Source dataframe.
+    cat_var : str
+        Categorical variable name.
+    target_var : str
+        Binary target variable name.
+    include_missing : bool, default=True
+        If True, missing values in cat_var are treated as a separate category 'Missing'.
+        Rows with missing target are always dropped.
+    sort_by_count : bool, default=True
+        If True, sort result by category count descending.
+
+    Returns
+    -------
+    pd.DataFrame
+        Summary dataframe.
+    """
+
+    # Checks
+    if cat_var not in df.columns:
+        raise KeyError(f"Column '{cat_var}' not found.")
+    if target_var not in df.columns:
+        raise KeyError(f"Column '{target_var}' not found.")
+
+    data = df[[cat_var, target_var]].copy()
+
+    # Drop rows with missing target
+    data = data[data[target_var].notna()].copy()
+
+    if data.empty:
+        raise ValueError("No rows with non-missing target.")
+
+    # Handle missing categories
+    if include_missing:
+        data[cat_var] = data[cat_var].astype("object")
+        data[cat_var] = data[cat_var].where(data[cat_var].notna(), "Missing")
+    else:
+        data = data[data[cat_var].notna()].copy()
+
+    if data.empty:
+        raise ValueError("No rows left after handling missing values.")
+
+    # Category count and category share
+    cat_count = data[cat_var].value_counts()
+    cat_share = data[cat_var].value_counts(normalize=True)
+
+    # Crosstab for target counts
+    target_counts = pd.crosstab(data[cat_var], data[target_var])
+
+    # Crosstab for target shares within category
+    target_shares = pd.crosstab(data[cat_var], data[target_var], normalize="index")
+
+    # Rename columns
+    target_counts.columns = [f"target_{col}_count" for col in target_counts.columns]
+    target_shares.columns = [f"target_{col}_share" for col in target_shares.columns]
+
+    # Combine all together
+    summary = pd.concat(
+        [
+            cat_count.rename("category_count"),
+            cat_share.rename("category_share"),
+            target_counts,
+            target_shares
+        ],
+        axis=1
+    ).reset_index()
+
+    summary = summary.rename(columns={cat_var: "category"})
+
+    if sort_by_count:
+        summary = summary.sort_values("category_count", ascending=False).reset_index(drop=True)
+
+    return summary
