@@ -53,9 +53,13 @@ This project will conduct analysis and modeling of train part (with custom train
 Notebooks contain logic behind conducted exploratory analysis and feature engineering. For each data set in this project there are number of notebooks which name starts with relevant prefix (e.g. application_train.csv -> app_...).
 - application_train.csv
     - app_col_review_missing_analysis - quick review of columns and analysis of variables with substantial number of NAN values in 'application_train.csv'
-    - app_univariate_bivariate_app_process - analysis of application (Application Process) data
-    - app_univariate_bivariate_documents_provided - analysis of application (documentation) data
-    - app_univariate_bivariate_loan - analysis of application (loan) data
+    - app_univariate_bivariate_app_process - analysis of application process data
+    - app_univariate_bivariate_documents_provided - analysis of documentation data
+    - app_univariate_bivariate_loan - analysis of loan data
+    - app_univariate_bivariate_financial_material - analysis of financial and material data
+    - app_univariate_bivariate_family_demografic - analysis of familiy and demografic data
+    - app_multivariate - multivarate analysis for application data
+    - app_preprocessing - preprocessing of application data
 - bureau.csv
     - bureau_col_review_missing_analysis
 
