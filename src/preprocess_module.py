@@ -892,7 +892,7 @@ def bin_quantitative_var(
 
         else:
             summary = (
-                data.groupby(binned_col, dropna=False)[target_var]
+                data.groupby(binned_col, dropna=False, observed=False)[target_var]
                 .agg(
                     count="size",
                     n_target_1="sum",
