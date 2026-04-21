@@ -472,7 +472,7 @@ def plot_binary_distribution(
 def plot_quantitative_vs_binary(
     df: pd.DataFrame,
     quant_var: str,
-    binary_var: str,
+    target_var: str,
     hist_bins: str | int = "auto",
     save_dir: Optional[str] = None
 ) -> None:
@@ -485,25 +485,25 @@ def plot_quantitative_vs_binary(
     """
 
     # Keep relevant columns and drop missing values
-    data = df[[quant_var, binary_var]].dropna().copy()
+    data = df[[quant_var, target_var]].dropna().copy()
 
     # Checks
     if quant_var not in df.columns:
         raise KeyError(f"Column '{quant_var}' not found.")
-    if binary_var not in df.columns:
-        raise KeyError(f"Column '{binary_var}' not found.")
-    if data[binary_var].nunique() != 2:
-        raise ValueError(f"'{binary_var}' must have exactly 2 non-null unique values.")
+    if target_var not in df.columns:
+        raise KeyError(f"Column '{target_var}' not found.")
+    if data[target_var].nunique() != 2:
+        raise ValueError(f"'{target_var}' must have exactly 2 non-null unique values.")
 
     # Order groups
-    groups = sorted(data[binary_var].unique())
+    groups = sorted(data[target_var].unique())
     if set(groups) == {0, 1}:
         groups = [0, 1]
 
     g1, g2 = groups
 
-    x1 = data.loc[data[binary_var] == g1, quant_var]
-    x2 = data.loc[data[binary_var] == g2, quant_var]
+    x1 = data.loc[data[target_var] == g1, quant_var]
+    x2 = data.loc[data[target_var] == g2, quant_var]
 
     # Metrics
     median1 = x1.median()
@@ -518,7 +518,7 @@ def plot_quantitative_vs_binary(
     sns.histplot(
         data=data,
         x=quant_var,
-        hue=binary_var,
+        hue=target_var,
         hue_order=groups,
         bins=hist_bins,
         element="step",
@@ -550,22 +550,22 @@ def plot_quantitative_vs_binary(
 
     sns.boxplot(
         data=data,
-        x=binary_var,
+        x=target_var,
         y=quant_var,
         order=groups,
         ax=axes[1]
     )
-    axes[1].set_title(f"Boxplot of {quant_var} by {binary_var}")
-    axes[1].set_xlabel(binary_var)
+    axes[1].set_title(f"Boxplot of {quant_var} by {target_var}")
+    axes[1].set_xlabel(target_var)
     axes[1].set_ylabel(quant_var)
 
-    fig.suptitle(f"{quant_var} vs {binary_var}", fontsize=13)
+    fig.suptitle(f"{quant_var} vs {target_var}", fontsize=13)
     plt.tight_layout()
 
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
         plt.savefig(
-            os.path.join(save_dir, f"{quant_var}_vs_{binary_var}.png"),
+            os.path.join(save_dir, f"{quant_var}_vs_{target_var}.png"),
             dpi=300,
             bbox_inches="tight"
         )
