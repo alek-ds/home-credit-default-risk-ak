@@ -117,13 +117,6 @@ def plot_quantitative_distribution(
     plt.show()
 
 
-from typing import Optional
-import os
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-
 def plot_categorical_distribution(
     df: pd.DataFrame,
     cat_var: str,
@@ -714,32 +707,61 @@ def plot_binary_vs_binary(
     plt.show()
 
 
-
 def plot_categorical_vs_binary(
     df: pd.DataFrame,
     cat_var: str,
     target_var: str,
     top_n: Optional[int] = None,
-    save_dir: Optional[str] = None
+    save_dir: Optional[str] = None,
+    respect_category_order: bool = False
 ) -> None:
     """
     Plot relationship between a categorical variable and a binary target.
 
-    Creates:
+    Creates
+    -------
     - 100% stacked bar plot
 
-    Shows:
+    Shows
+    -----
     - chi-square p-value
     - range of target rate across categories
 
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    cat_var : str
+        Categorical variable to plot.
+    target_var : str
+        Binary target variable.
+    top_n : int, optional
+        If provided, only top_n categories are shown.
+        Remaining non-missing categories are grouped as 'Other'.
+        Missing values, if present, are shown separately as 'Missing'.
+    save_dir : str, optional
+        Directory where the plot should be saved. If None, the plot is not saved.
+    respect_category_order : bool, default=False
+        Whether to respect the original order of categories when `cat_var`
+        is a pandas ordered categorical variable.
+        This is especially useful for ordinal variables and binned quantitative features.
+        If False, categories are ordered by frequency.
+
+    Returns
+    -------
+    None
+
     Notes
     -----
-    Missing values in cat_var are treated as a separate category: 'Missing'.
-    If top_n is provided, only the top_n most frequent non-missing categories
-    are shown, remaining non-missing categories are grouped as 'Other'.
+    Missing values in `cat_var` are treated as a separate category: 'Missing'.
+    Rows with missing values in `target_var` are excluded.
     """
 
-    # Checks
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+
     for col in [cat_var, target_var]:
         if col not in df.columns:
             raise KeyError(f"Column '{col}' not found")
@@ -747,7 +769,6 @@ def plot_categorical_vs_binary(
     if top_n is not None and top_n <= 0:
         raise ValueError("top_n must be a positive integer or None")
 
-    # Target must be binary (ignoring NaNs)
     target_non_missing = df[target_var].dropna()
     if target_non_missing.nunique() != 2:
         raise ValueError(
@@ -759,68 +780,88 @@ def plot_categorical_vs_binary(
         unique_vals = list(pd.unique(series.dropna()))
         if set(unique_vals) == {0, 1}:
             return [0, 1]
-        elif set(unique_vals) == {"N", "Y"}:
+        if set(unique_vals) == {"N", "Y"}:
             return ["N", "Y"]
-        else:
-            return sorted(unique_vals)
+        return sorted(unique_vals)
 
     target_order = get_binary_order(df[target_var])
 
-    # Keep only rows with non-missing target
     plot_data = df[[cat_var, target_var]].copy()
     plot_data = plot_data[plot_data[target_var].notna()].copy()
 
     if plot_data.empty:
         raise ValueError("No rows with non-missing target available.")
 
-    # Treat missing categorical values as category
-    plot_data[cat_var] = plot_data[cat_var].astype("object")
-    plot_data[cat_var] = plot_data[cat_var].where(plot_data[cat_var].notna(), "Missing")
+    is_categorical = isinstance(plot_data[cat_var].dtype, pd.CategoricalDtype)
+    use_category_order = (
+        respect_category_order
+        and is_categorical
+        and plot_data[cat_var].cat.ordered
+    )
 
-    # Apply top_n logic while preserving Missing
-    cat_counts = plot_data[cat_var].value_counts()
+    if use_category_order:
+        ordered_categories = list(plot_data[cat_var].cat.categories)
+        plot_data[cat_var] = plot_data[cat_var].astype("object")
+        plot_data[cat_var] = plot_data[cat_var].where(plot_data[cat_var].notna(), "Missing")
 
-    if top_n is not None:
-        missing_count = cat_counts.get("Missing", 0)
-        non_missing_counts = cat_counts.drop(index="Missing", errors="ignore")
+        if top_n is not None and len(ordered_categories) > top_n:
+            kept_categories = ordered_categories[:top_n]
+            plot_data.loc[
+                ~plot_data[cat_var].isin(kept_categories + ["Missing"]),
+                cat_var
+            ] = "Other"
+            category_order = kept_categories.copy()
+            if (plot_data[cat_var] == "Other").any():
+                category_order.append("Other")
+            if (plot_data[cat_var] == "Missing").any():
+                category_order.append("Missing")
+        else:
+            category_order = ordered_categories.copy()
+            if (plot_data[cat_var] == "Missing").any():
+                category_order.append("Missing")
 
-        if len(non_missing_counts) > top_n:
-            top_counts = non_missing_counts.iloc[:top_n]
-            other_count = non_missing_counts.iloc[top_n:].sum()
-
-            kept_categories = list(top_counts.index)
-            plot_data.loc[~plot_data[cat_var].isin(kept_categories + ["Missing"]), cat_var] = "Other"
-
-    # Recompute counts after possible grouping
-    cat_counts = plot_data[cat_var].value_counts()
-
-    # Category order
-    if "Missing" in cat_counts.index:
-        non_missing_order = [cat for cat in cat_counts.index if cat != "Missing"]
-        category_order = non_missing_order + ["Missing"]
     else:
-        category_order = list(cat_counts.index)
+        plot_data[cat_var] = plot_data[cat_var].astype("object")
+        plot_data[cat_var] = plot_data[cat_var].where(plot_data[cat_var].notna(), "Missing")
 
-    # Contingency table
+        cat_counts = plot_data[cat_var].value_counts()
+
+        if top_n is not None:
+            non_missing_counts = cat_counts.drop(index="Missing", errors="ignore")
+
+            if len(non_missing_counts) > top_n:
+                top_counts = non_missing_counts.iloc[:top_n]
+                kept_categories = list(top_counts.index)
+
+                plot_data.loc[
+                    ~plot_data[cat_var].isin(kept_categories + ["Missing"]),
+                    cat_var
+                ] = "Other"
+
+        cat_counts = plot_data[cat_var].value_counts()
+
+        if "Missing" in cat_counts.index:
+            non_missing_order = [cat for cat in cat_counts.index if cat != "Missing"]
+            category_order = non_missing_order + ["Missing"]
+        else:
+            category_order = list(cat_counts.index)
+
     counts = pd.crosstab(plot_data[cat_var], plot_data[target_var])
     counts = counts.reindex(index=category_order, columns=target_order, fill_value=0)
 
     proportions = counts.div(counts.sum(axis=1), axis=0)
 
-    # Metrics
     chi2, p_value, _, _ = chi2_contingency(counts)
 
     positive_class = target_order[1]
     target_rates = proportions[positive_class]
     rate_range_pp = (target_rates.max() - target_rates.min()) * 100
 
-    # Colors
     class_colors = {
         target_order[0]: "steelblue",
         target_order[1]: "red"
     }
 
-    # Plot
     fig, ax = plt.subplots(figsize=(10, 6))
 
     x_labels = proportions.index.astype(str)
@@ -839,7 +880,6 @@ def plot_categorical_vs_binary(
             color=class_colors[target_class]
         )
 
-        # Add percentage labels inside bar segments
         for i, (idx, height) in enumerate(heights.items()):
             if height > 0.03:
                 ax.text(
