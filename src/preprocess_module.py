@@ -736,3 +736,249 @@ def categorical_target_summary(
         summary = summary.sort_values("category_count", ascending=False).reset_index(drop=True)
 
     return summary
+
+
+
+from typing import List, Optional, Union, Tuple
+import pandas as pd
+
+
+def bin_quantitative_var(
+    df: pd.DataFrame,
+    quant_var: str,
+    bin_thresholds: Optional[List[float]] = None,
+    labels: Optional[List[str]] = None,
+    quantiles_bins: bool = True,
+    values_bins: bool = False,
+    n_quantile_bins: int = 5,
+    target_var: Optional[str] = None,
+    missing_as_category: bool = False,
+    missing_label: str = "Missing",
+    return_binned_quantiles: bool = False,
+    return_binned_values: bool = False,
+    return_df: bool = True,
+    return_summary: bool = False
+) -> Union[
+    pd.DataFrame,
+    pd.Series,
+    Tuple[pd.Series, pd.DataFrame],
+    Tuple[pd.Series, pd.Series],
+    Tuple[pd.Series, pd.Series, pd.DataFrame],
+    Tuple[pd.DataFrame, pd.DataFrame],
+    Tuple[pd.Series, pd.DataFrame, pd.DataFrame],
+    Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFrame]
+]:
+    """
+    Bin a quantitative variable using quantile-based bins and/or user-defined value bins.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    quant_var : str
+        Name of the quantitative variable to bin.
+    bin_thresholds : list of float, optional
+        Thresholds used for value-based binning with pd.cut().
+        Example: [-float("inf"), 0, 1000, 5000, float("inf")]
+        Required when values_bins=True.
+    labels : list of str, optional
+        Labels for value-based bins. Must have length equal to
+        len(bin_thresholds) - 1 when provided.
+    quantiles_bins : bool, default=True
+        Whether to create quantile-based bins using pd.qcut().
+    values_bins : bool, default=False
+        Whether to create value-based bins using pd.cut().
+    n_quantile_bins : int, default=5
+        Number of quantile bins to create when quantiles_bins=True.
+    target_var : str, optional
+        Binary target variable coded as 0/1. If provided, summary will include:
+        count, share, n_target_1, n_target_0, and target_rate for each bin.
+    missing_as_category : bool, default=False
+        Whether to treat missing values in `quant_var` as a separate category
+        in created binned columns and in summary.
+    missing_label : str, default="Missing"
+        Label used for missing values when missing_as_category=True.
+    return_binned_quantiles : bool, default=False
+        Whether to return the quantile-binned Series.
+    return_binned_values : bool, default=False
+        Whether to return the value-binned Series.
+    return_df : bool, default=True
+        Whether to return the dataframe with created binned columns added.
+    return_summary : bool, default=False
+        Whether to return a summary dataframe describing created bins.
+
+    Returns
+    -------
+    Depending on selected return_* arguments, the function returns one or more of:
+    - pd.Series with quantile bins
+    - pd.Series with value bins
+    - pd.DataFrame with added binned columns
+    - pd.DataFrame summary of created bins
+
+    Notes
+    -----
+    - If missing_as_category=False, missing values in `quant_var` remain missing
+      in created binned columns.
+    - If missing_as_category=True, missing values are replaced with `missing_label`
+      in created binned columns and included explicitly in summary.
+    - For qcut, duplicate cut points may occur when the variable has many repeated values.
+      In that case, duplicates="drop" is used automatically.
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+    if not quantiles_bins and not values_bins:
+        raise ValueError("At least one of quantiles_bins or values_bins must be True.")
+    if quantiles_bins and n_quantile_bins < 2:
+        raise ValueError("n_quantile_bins must be at least 2.")
+
+    if values_bins:
+        if bin_thresholds is None:
+            raise ValueError("bin_thresholds must be provided when values_bins=True.")
+        if len(bin_thresholds) < 2:
+            raise ValueError("bin_thresholds must contain at least 2 values.")
+        if sorted(bin_thresholds) != bin_thresholds:
+            raise ValueError("bin_thresholds must be sorted in increasing order.")
+        if labels is not None and len(labels) != len(bin_thresholds) - 1:
+            raise ValueError("labels must have length len(bin_thresholds) - 1.")
+
+    if target_var is not None:
+        if target_var not in df.columns:
+            raise KeyError(f"Target column '{target_var}' not found.")
+
+        target_non_missing = df[target_var].dropna()
+        unique_target_values = set(target_non_missing.unique())
+
+        if len(target_non_missing) == 0:
+            raise ValueError(f"Target column '{target_var}' contains only missing values.")
+
+        if not unique_target_values.issubset({0, 1}):
+            raise ValueError(
+                f"Target column '{target_var}' must be binary and coded as 0/1. "
+                f"Found values: {sorted(unique_target_values)}"
+            )
+
+    if not isinstance(missing_label, str) or missing_label == "":
+        raise ValueError("missing_label must be a non-empty string.")
+
+    df_out = df.copy()
+    summary_frames = []
+
+    def _finalize_binned_series(series: pd.Series) -> pd.Series:
+        """Optionally convert missing values into an explicit category."""
+        if missing_as_category:
+            return series.astype("object").fillna(missing_label)
+        return series
+
+    def _build_bin_summary(
+        data: pd.DataFrame,
+        binned_col: str,
+        binning_type: str
+    ) -> pd.DataFrame:
+        """Create summary table for one binned column."""
+
+        if target_var is None:
+            summary = (
+                data[binned_col]
+                .value_counts(dropna=False)
+                .rename_axis("bin")
+                .reset_index(name="count")
+            )
+            summary["share"] = summary["count"] / len(data)
+
+        else:
+            summary = (
+                data.groupby(binned_col, dropna=False)[target_var]
+                .agg(
+                    count="size",
+                    n_target_1="sum",
+                    target_rate="mean"
+                )
+                .reset_index()
+                .rename(columns={binned_col: "bin"})
+            )
+
+            summary["n_target_0"] = summary["count"] - summary["n_target_1"]
+            summary["share"] = summary["count"] / len(data)
+            summary = summary[
+                ["bin", "count", "share", "n_target_1", "n_target_0", "target_rate"]
+            ]
+
+        summary.insert(0, "binning_type", binning_type)
+        summary.insert(0, "binned_column", binned_col)
+        summary.insert(0, "feature", quant_var)
+
+        return summary
+
+    if quantiles_bins:
+        binned_quantiles_name = f"{quant_var}_binned_quantiles"
+        quantile_labels = [f"Q{i}" for i in range(1, n_quantile_bins + 1)]
+
+        df_out[binned_quantiles_name] = pd.qcut(
+            df_out[quant_var],
+            q=n_quantile_bins,
+            labels=quantile_labels,
+            duplicates="drop"
+        )
+        df_out[binned_quantiles_name] = _finalize_binned_series(df_out[binned_quantiles_name])
+
+        summary_frames.append(
+            _build_bin_summary(
+                data=df_out,
+                binned_col=binned_quantiles_name,
+                binning_type="quantiles"
+            )
+        )
+
+    if values_bins:
+        binned_values_name = f"{quant_var}_binned_values"
+
+        df_out[binned_values_name] = pd.cut(
+            df_out[quant_var],
+            bins=bin_thresholds,
+            labels=labels
+        )
+        df_out[binned_values_name] = _finalize_binned_series(df_out[binned_values_name])
+
+        summary_frames.append(
+            _build_bin_summary(
+                data=df_out,
+                binned_col=binned_values_name,
+                binning_type="values"
+            )
+        )
+
+    summary = (
+        pd.concat(summary_frames, axis=0, ignore_index=True)
+        if summary_frames
+        else pd.DataFrame()
+    )
+
+    outputs = []
+
+    if quantiles_bins and return_binned_quantiles:
+        outputs.append(df_out[binned_quantiles_name])
+
+    if values_bins and return_binned_values:
+        outputs.append(df_out[binned_values_name])
+
+    if return_df:
+        outputs.append(df_out)
+
+    if return_summary:
+        outputs.append(summary)
+
+    if len(outputs) == 0:
+        raise ValueError(
+            "At least one of return_binned_quantiles, return_binned_values, "
+            "return_df, or return_summary must be True."
+        )
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
