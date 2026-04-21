@@ -117,69 +117,149 @@ def plot_quantitative_distribution(
     plt.show()
 
 
+from typing import Optional
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
 def plot_categorical_distribution(
-        df: pd.DataFrame,
-        cat_var: str,
-        save_dir: Optional[str] = None,
-        top_n: Optional[int] = None
+    df: pd.DataFrame,
+    cat_var: str,
+    save_dir: Optional[str] = None,
+    top_n: Optional[int] = None,
+    respect_category_order: bool = False
 ) -> None:
-    """ 
-    Plots univariate distribution of a categorical variable
-    Creates:
-        - barplot of category counts
+    """
+    Plot univariate distribution of a categorical variable.
+
+    Creates
+    -------
+    - bar plot of category counts
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    cat_var : str
+        Name of the categorical variable to plot.
+    save_dir : str, optional
+        Directory where the plot should be saved. If None, the plot is not saved.
+    top_n : int, optional
+        If provided, keep only top_n most frequent non-missing categories.
+        Remaining non-missing categories are grouped into 'Other'.
+        Missing values, if present, are shown separately as 'Missing'.
+    respect_category_order : bool, default=False
+        Whether to respect the original order of categories when `cat_var`
+        is a pandas ordered categorical variable.
+        This is especially useful for ordinal variables and binned quantitative features.
+        If False, categories are ordered by frequency as in value_counts().
+
+    Returns
+    -------
+    None
     """
 
     # Checks
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
     if cat_var not in df.columns:
-        raise KeyError(f"Column '{cat_var}' not found")
-    if not (
-        pd.api.types.is_object_dtype(df[cat_var])
-        or pd.api.types.is_categorical_dtype(df[cat_var])
-    ):
+        raise KeyError(f"Column '{cat_var}' not found.")
+
+    is_object = pd.api.types.is_object_dtype(df[cat_var])
+    is_categorical = pd.api.types.is_categorical_dtype(df[cat_var])
+
+    if not (is_object or is_categorical):
         raise ValueError(f"Column '{cat_var}' has wrong dtype: {df[cat_var].dtype}")
-    
+
     if top_n is not None and top_n <= 0:
         raise ValueError(f"top_n ({top_n}) must be a positive integer or None")
 
-    # Misssing metrics 
+    # Missing metrics
     nans = df[cat_var].isna().sum()
     nans_share = nans / len(df)
-    
-    plot_data = df[cat_var].astype("object").fillna('Missing').copy()
-    
-    if plot_data.empty:
+
+    # Prepare plotting series
+    plot_data = df[cat_var].copy()
+
+    if plot_data.dropna().empty:
         raise ValueError(f"Column '{cat_var}' contains only missing values.")
-    
+
     n_unique_non_missing = df[cat_var].nunique(dropna=True)
-    value_counts = plot_data.value_counts(dropna=False)
 
-    # Top-n handling
-    if top_n is not None and len(value_counts) > top_n:
-        missing_count = value_counts.get("Missing", 0)
+    # Determine whether ordered categorical logic should be used
+    use_category_order = (
+        respect_category_order
+        and is_categorical
+        and df[cat_var].cat.ordered
+    )
 
-        non_missing_counts = value_counts.drop(index="Missing", errors="ignore")
+    if use_category_order:
+        # Keep category order from dtype
+        ordered_categories = list(df[cat_var].cat.categories)
 
-        if len(non_missing_counts) > top_n:
-            top_counts = non_missing_counts.iloc[:top_n]
-            other_count = non_missing_counts.iloc[top_n:].sum()
+        counts = plot_data.value_counts(dropna=False, sort=False)
 
-            final_counts = top_counts.copy()
+        value_counts = pd.Series(
+            [counts.get(cat, 0) for cat in ordered_categories],
+            index=ordered_categories,
+            dtype="int64"
+        )
+
+        if nans > 0:
+            value_counts.loc["Missing"] = nans
+
+        # Top-n handling for ordered categories:
+        # keep first top_n ordered categories, aggregate the rest into Other,
+        # and append Missing at the end if present
+        if top_n is not None and len(ordered_categories) > top_n:
+            kept_categories = ordered_categories[:top_n]
+            remaining_categories = ordered_categories[top_n:]
+
+            final_counts = value_counts.loc[kept_categories].copy()
+            other_count = value_counts.loc[remaining_categories].sum()
+
             if other_count > 0:
                 final_counts.loc["Other"] = other_count
-        else:
-            final_counts = non_missing_counts.copy()
 
-        if missing_count > 0:
-            final_counts.loc["Missing"] = missing_count
-        
-        value_counts = final_counts
-    
-    mode = value_counts.index[0]
-    mode_count = value_counts.iloc[0]
-    mode_share = mode_count / len(plot_data)
-  
+            if nans > 0:
+                final_counts.loc["Missing"] = nans
+
+            value_counts = final_counts
+
+    else:
+        # Default behavior: order by frequency
+        plot_data = plot_data.astype("object").fillna("Missing")
+        value_counts = plot_data.value_counts(dropna=False)
+
+        if top_n is not None and len(value_counts) > top_n:
+            missing_count = value_counts.get("Missing", 0)
+            non_missing_counts = value_counts.drop(index="Missing", errors="ignore")
+
+            if len(non_missing_counts) > top_n:
+                top_counts = non_missing_counts.iloc[:top_n]
+                other_count = non_missing_counts.iloc[top_n:].sum()
+
+                final_counts = top_counts.copy()
+                if other_count > 0:
+                    final_counts.loc["Other"] = other_count
+            else:
+                final_counts = non_missing_counts.copy()
+
+            if missing_count > 0:
+                final_counts.loc["Missing"] = missing_count
+
+            value_counts = final_counts
+
+    mode = value_counts.idxmax()
+    mode_count = value_counts.max()
+    mode_share = mode_count / len(df)
+
     # Plot
-    fig, ax = plt.subplots(figsize=(10,5))
+    fig, ax = plt.subplots(figsize=(10, 5))
 
     sns.barplot(
         x=value_counts.values,
@@ -203,7 +283,7 @@ def plot_categorical_distribution(
         va="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85)
     )
-    
+
     plt.tight_layout()
 
     if save_dir is not None:
