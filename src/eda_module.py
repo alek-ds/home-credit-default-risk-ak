@@ -806,19 +806,23 @@ def plot_categorical_vs_binary(
 
         if top_n is not None and len(ordered_categories) > top_n:
             kept_categories = ordered_categories[:top_n]
+
             plot_data.loc[
                 ~plot_data[cat_var].isin(kept_categories + ["Missing"]),
                 cat_var
             ] = "Other"
+
             category_order = kept_categories.copy()
+
             if (plot_data[cat_var] == "Other").any():
                 category_order.append("Other")
-            if (plot_data[cat_var] == "Missing").any():
+            if (plot_data[cat_var] == "Missing").any() and "Missing" not in category_order:
                 category_order.append("Missing")
+
         else:
             category_order = ordered_categories.copy()
-            if (plot_data[cat_var] == "Missing").any():
-                category_order.append("Missing")
+
+        category_order = list(dict.fromkeys(category_order))
 
     else:
         plot_data[cat_var] = plot_data[cat_var].astype("object")
