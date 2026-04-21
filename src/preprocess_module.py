@@ -871,6 +871,11 @@ def bin_quantitative_var(
     def _finalize_binned_series(series: pd.Series) -> pd.Series:
         """Optionally convert missing values into an explicit category."""
         if missing_as_category:
+            if isinstance(series.dtype, pd.CategoricalDtype):
+                if missing_label not in series.cat.categories:
+                    series = series.cat.add_categories([missing_label])
+                series = series.fillna(missing_label)
+                return series
             return series.astype("object").fillna(missing_label)
         return series
 
