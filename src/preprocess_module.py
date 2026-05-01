@@ -1,6 +1,7 @@
 import operator
 import numpy as np
 import pandas as pd
+from optbinning import OptimalBinning
 from typing import List, Tuple, Union, Optional
 
 
@@ -987,3 +988,107 @@ def bin_quantitative_var(
         return outputs[0]
 
     return tuple(outputs)
+
+
+
+def _fit_optbin_var_core(
+    df_train: pd.DataFrame,
+    df_valid: pd.DataFrame,
+    var: str,
+    dtype: Literal["numerical", "categorical"],
+    target: str = "TARGET",
+    metric: Literal["bins", "woe"] = "bins",
+    monotonic_trend: str | None = "auto",
+    min_bin_size: float = 0.05,
+    special_codes=None
+):
+    """
+    Fit optimal binning on train only and transform train/valid.
+
+    Returns:
+        train_transformed: pd.Series
+        valid_transformed: pd.Series
+        optb: fitted OptimalBinning object
+        bt: binning table
+    """
+
+    if metric not in {"bins", "woe"}:
+        raise ValueError("metric must be either 'bins' or 'woe'.")
+
+    optb = OptimalBinning(
+        name=var,
+        dtype=dtype,
+        monotonic_trend=monotonic_trend,
+        min_bin_size=min_bin_size,
+        special_codes=special_codes
+    )
+
+    optb.fit(df_train[var].values, df_train[target].values)
+    bt = optb.binning_table.build()
+
+    out_name = f"{var}_woe" if metric == "woe" else f"{var}_optbin_bin"
+
+    train_transformed = pd.Series(
+        optb.transform(df_train[var].values, metric=metric),
+        index=df_train.index,
+        name=out_name
+    )
+
+    valid_transformed = pd.Series(
+        optb.transform(df_valid[var].values, metric=metric),
+        index=df_valid.index,
+        name=out_name
+    )
+
+    return train_transformed, valid_transformed, optb, bt
+
+
+def fit_optbin_var(
+    df_train: pd.DataFrame,
+    df_valid: pd.DataFrame,
+    var: str,
+    dtype: Literal["numerical", "categorical"],
+    target: str = "TARGET",
+    metric: Literal["bins", "woe"] = "bins",
+    monotonic_trend: str | None = "auto",
+    min_bin_size: float = 0.05,
+    special_codes=None,
+    overwrite: bool = False
+):
+    """
+    Pipeline-style wrapper:
+    fit on train, transform train/valid, add new column, return updated DataFrames.
+
+    Returns:
+        df_train_out: pd.DataFrame
+        df_valid_out: pd.DataFrame
+        optb: fitted OptimalBinning object
+        bt: binning table
+    """
+
+    train_transformed, valid_transformed, optb, bt = _fit_optbin_var_core(
+        df_train=df_train,
+        df_valid=df_valid,
+        var=var,
+        dtype=dtype,
+        target=target,
+        metric=metric,
+        monotonic_trend=monotonic_trend,
+        min_bin_size=min_bin_size,
+        special_codes=special_codes
+    )
+
+    df_train_out = df_train.copy()
+    df_valid_out = df_valid.copy()
+
+    new_col = train_transformed.name
+
+    if (not overwrite) and (new_col in df_train_out.columns or new_col in df_valid_out.columns):
+        raise ValueError(
+            f"Column '{new_col}' already exists. Set overwrite=True to replace it."
+        )
+
+    df_train_out[new_col] = train_transformed
+    df_valid_out[new_col] = valid_transformed
+
+    return df_train_out, df_valid_out, optb, bt
