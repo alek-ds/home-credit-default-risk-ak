@@ -2,7 +2,7 @@ import operator
 import numpy as np
 import pandas as pd
 from optbinning import OptimalBinning
-from typing import List, Tuple, Union, Optional
+from typing import List, Tuple, Union, Optional, Dict, Any
 
 
 def _build_invalid_mask(
@@ -741,7 +741,6 @@ def categorical_target_summary(
 
 
 from typing import List, Optional, Union, Tuple
-import pandas as pd
 
 
 def bin_quantitative_var(
@@ -983,6 +982,242 @@ def bin_quantitative_var(
             "At least one of return_binned_quantiles, return_binned_values, "
             "return_df, or return_summary must be True."
         )
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
+
+
+
+def fit_quantitative_binner(
+    df_train: pd.DataFrame,
+    quant_var: str,
+    binning_type: str = "quantiles",
+    n_quantile_bins: int = 5,
+    bin_thresholds: Optional[List[float]] = None,
+    labels: Optional[List[str]] = None,
+    missing_as_category: bool = False,
+    missing_label: str = "Missing"
+) -> Dict[str, Any]:
+    """
+    Fit binning rules for a quantitative variable on training data only.
+
+    Parameters
+    ----------
+    df_train : pd.DataFrame
+        Training dataframe used to learn bin edges.
+    quant_var : str
+        Quantitative variable to bin.
+    binning_type : {"quantiles", "values"}, default="quantiles"
+        Type of binning to fit.
+    n_quantile_bins : int, default=5
+        Requested number of quantile bins when binning_type="quantiles".
+    bin_thresholds : list of float, optional
+        User-defined thresholds for value-based binning.
+        Required when binning_type="values".
+    labels : list of str, optional
+        Bin labels. If None, labels are created automatically.
+    missing_as_category : bool, default=False
+        Whether missing values should be converted to a separate category
+        during transform.
+    missing_label : str, default="Missing"
+        Label for missing values if missing_as_category=True.
+
+    Returns
+    -------
+    dict
+        Fitted binning specification.
+    """
+
+    if df_train.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df_train.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    if quant_var not in df_train.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+    if binning_type not in {"quantiles", "values"}:
+        raise ValueError("binning_type must be either 'quantiles' or 'values'.")
+    if not isinstance(missing_label, str) or missing_label == "":
+        raise ValueError("missing_label must be a non-empty string.")
+
+    train_series = df_train[quant_var]
+
+    if binning_type == "quantiles":
+        if n_quantile_bins < 2:
+            raise ValueError("n_quantile_bins must be at least 2.")
+
+        # Learn actual edges on train only
+        _, bin_edges = pd.qcut(
+            train_series,
+            q=n_quantile_bins,
+            duplicates="drop",
+            retbins=True
+        )
+
+        n_actual_bins = len(bin_edges) - 1
+        if n_actual_bins < 1:
+            raise ValueError(
+                f"Could not create bins for '{quant_var}'. "
+                "Variable may have too few distinct non-missing values."
+            )
+
+        if labels is None:
+            labels = [f"Q{i}" for i in range(1, n_actual_bins + 1)]
+        elif len(labels) != n_actual_bins:
+            raise ValueError(
+                f"labels must have length equal to the number of actual bins ({n_actual_bins})."
+            )
+
+    else:  # values
+        if bin_thresholds is None:
+            raise ValueError("bin_thresholds must be provided when binning_type='values'.")
+        if len(bin_thresholds) < 2:
+            raise ValueError("bin_thresholds must contain at least 2 values.")
+        if sorted(bin_thresholds) != bin_thresholds:
+            raise ValueError("bin_thresholds must be sorted in increasing order.")
+
+        bin_edges = np.asarray(bin_thresholds, dtype=float)
+
+        if labels is None:
+            labels = [f"bin_{i}" for i in range(1, len(bin_edges))]
+        elif len(labels) != len(bin_edges) - 1:
+            raise ValueError("labels must have length len(bin_thresholds) - 1.")
+
+    return {
+        "quant_var": quant_var,
+        "binning_type": binning_type,
+        "bin_edges": bin_edges.tolist(),
+        "labels": labels,
+        "missing_as_category": missing_as_category,
+        "missing_label": missing_label,
+        "n_requested_quantile_bins": n_quantile_bins if binning_type == "quantiles" else None,
+        "n_actual_bins": len(bin_edges) - 1
+    }
+
+
+def transform_quantitative_binner(
+    df: pd.DataFrame,
+    binner: Dict[str, Any],
+    return_binned_var: bool = False,
+    return_df: bool = True,
+    return_summary: bool = False,
+    target_var: Optional[str] = None
+) -> Union[
+    pd.DataFrame,
+    pd.Series,
+    Tuple[pd.Series, pd.DataFrame],
+    Tuple[pd.DataFrame, pd.DataFrame],
+    Tuple[pd.Series, pd.DataFrame, pd.DataFrame]
+]:
+    """
+    Apply a fitted quantitative binner to any dataframe.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe to transform.
+    binner : dict
+        Fitted binning specification from fit_quantitative_binner().
+    return_binned_var : bool, default=False
+        Whether to return the binned Series.
+    return_df : bool, default=True
+        Whether to return dataframe with the binned column added.
+    return_summary : bool, default=False
+        Whether to return summary of the binned column.
+    target_var : str, optional
+        Binary target coded as 0/1. If provided, summary includes target stats.
+
+    Returns
+    -------
+    Depending on selected options:
+    - binned Series
+    - dataframe with added binned column
+    - summary dataframe
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+
+    quant_var = binner["quant_var"]
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+
+    if target_var is not None:
+        if target_var not in df.columns:
+            raise KeyError(f"Target column '{target_var}' not found.")
+
+        target_non_missing = df[target_var].dropna()
+        unique_target_values = set(target_non_missing.unique())
+
+        if len(target_non_missing) == 0:
+            raise ValueError(f"Target column '{target_var}' contains only missing values.")
+        if not unique_target_values.issubset({0, 1}):
+            raise ValueError(
+                f"Target column '{target_var}' must be binary and coded as 0/1. "
+                f"Found values: {sorted(unique_target_values)}"
+            )
+
+    df_out = df.copy()
+    edges = binner["bin_edges"]
+    labels = binner["labels"]
+    missing_as_category = binner["missing_as_category"]
+    missing_label = binner["missing_label"]
+    binning_type = binner["binning_type"]
+
+    binned_col = f"{quant_var}_binned_{binning_type}"
+
+    df_out[binned_col] = pd.cut(
+        df_out[quant_var],
+        bins=edges,
+        labels=labels,
+        include_lowest=True
+    )
+
+    if missing_as_category:
+        if missing_label not in df_out[binned_col].cat.categories:
+            df_out[binned_col] = df_out[binned_col].cat.add_categories([missing_label])
+        df_out[binned_col] = df_out[binned_col].fillna(missing_label)
+
+    summary = None
+    if return_summary:
+        if target_var is None:
+            summary = (
+                df_out[binned_col]
+                .value_counts(dropna=False, sort=False)
+                .rename_axis("bin")
+                .reset_index(name="count")
+            )
+            summary["share"] = summary["count"] / len(df_out)
+        else:
+            summary = (
+                df_out.groupby(binned_col, dropna=False, observed=False)[target_var]
+                .agg(count="size", n_target_1="sum", target_rate="mean")
+                .reset_index()
+                .rename(columns={binned_col: "bin"})
+            )
+            summary["n_target_0"] = summary["count"] - summary["n_target_1"]
+            summary["share"] = summary["count"] / len(df_out)
+            summary = summary[["bin", "count", "share", "n_target_1", "n_target_0", "target_rate"]]
+
+        summary.insert(0, "binned_column", binned_col)
+        summary.insert(0, "feature", quant_var)
+
+    outputs = []
+
+    if return_binned_var:
+        outputs.append(df_out[binned_col])
+
+    if return_df:
+        outputs.append(df_out)
+
+    if return_summary:
+        outputs.append(summary)
+
+    if len(outputs) == 0:
+        raise ValueError("At least one of return_binned_var, return_df, or return_summary must be True.")
 
     if len(outputs) == 1:
         return outputs[0]
