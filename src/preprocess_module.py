@@ -2,7 +2,7 @@ import operator
 import numpy as np
 import pandas as pd
 from optbinning import OptimalBinning
-from typing import List, Tuple, Union, Optional, Dict, Any
+from typing import List, Tuple, Union, Optional, Dict, Any, Literal
 
 
 def _build_invalid_mask(
@@ -648,6 +648,151 @@ def cap_quantitative_var(
     return tuple(outputs)
 
 
+
+def fit_capper(
+    df_train: pd.DataFrame,
+    quant_var: str,
+    cap_quantile: float = 0.90
+) -> Dict[str, Any]:
+    """
+    Fit an upper cap for a quantitative variable on training data only.
+
+    Parameters
+    ----------
+    df_train : pd.DataFrame
+        Training dataframe used to learn the cap threshold.
+    quant_var : str
+        Quantitative variable to cap.
+    cap_quantile : float, default=0.90
+        Quantile used to define the upper cap. Must satisfy 0 < cap_quantile < 1.
+
+    Returns
+    -------
+    dict
+        Dictionary with fitted capping specification.
+    """
+
+    if df_train.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df_train.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+    if quant_var not in df_train.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+    if not 0 < cap_quantile < 1:
+        raise ValueError("Require 0 < cap_quantile < 1.")
+
+    upper_bound = df_train[quant_var].quantile(cap_quantile)
+
+    return {
+        "quant_var": quant_var,
+        "cap_quantile": cap_quantile,
+        "upper_bound": upper_bound,
+        "capped_col": f"{quant_var}_capped_{str(cap_quantile).replace('.', '_')}"
+    }
+
+
+
+
+def transform_capper(
+    df: pd.DataFrame,
+    capper: Dict[str, Any],
+    return_capped_var: bool = True,
+    return_capped_df: bool = False,
+    drop_original_var: bool = False,
+    return_summary: bool = False
+) -> Union[
+    pd.Series,
+    pd.DataFrame,
+    pd.Series,
+    Tuple[pd.Series, pd.DataFrame],
+    Tuple[pd.Series, pd.Series],
+    Tuple[pd.DataFrame, pd.Series],
+    Tuple[pd.Series, pd.DataFrame, pd.Series]
+]:
+    """
+    Apply a fitted upper cap to a quantitative variable.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe to transform.
+    capper : dict
+        Fitted capping specification from fit_capper().
+    return_capped_var : bool, default=True
+        Whether to return the capped variable as a Series.
+    return_capped_df : bool, default=False
+        Whether to return a dataframe with the capped variable added.
+    drop_original_var : bool, default=False
+        Whether to drop the original variable from the returned dataframe.
+        Used only when return_capped_df=True.
+    return_summary : bool, default=False
+        Whether to return a summary of the capping operation.
+
+    Returns
+    -------
+    Depending on selected arguments, returns one or more of:
+    - capped variable
+    - dataframe with capped variable
+    - summary of capping operation
+    """
+
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe has no columns.")
+
+    quant_var = capper["quant_var"]
+    upper_bound = capper["upper_bound"]
+    cap_quantile = capper["cap_quantile"]
+    capped_col = capper["capped_col"]
+
+    if quant_var not in df.columns:
+        raise KeyError(f"Column '{quant_var}' not found.")
+
+    df_out = df.copy()
+    df_out[capped_col] = df_out[quant_var].clip(upper=upper_bound)
+
+    n_non_missing = df_out[quant_var].notna().sum()
+    n_rows_capped = (df_out[quant_var] > upper_bound).sum()
+
+    summary = pd.Series({
+        "quant_var": quant_var,
+        "capped_col": capped_col,
+        "cap_quantile_fitted_on_train": cap_quantile,
+        "upper_bound": upper_bound,
+        "n_rows_total": len(df_out),
+        "n_non_missing": int(n_non_missing),
+        "n_missing_in_var": int(df_out[quant_var].isna().sum()),
+        "n_rows_capped": int(n_rows_capped),
+        "rows_capped_share_total": n_rows_capped / len(df_out),
+        "rows_capped_share_non_missing": n_rows_capped / n_non_missing if n_non_missing > 0 else np.nan,
+    })
+
+    outputs = []
+
+    if return_capped_var:
+        outputs.append(df_out[capped_col])
+
+    if return_capped_df:
+        if drop_original_var:
+            outputs.append(df_out.drop(columns=[quant_var]))
+        else:
+            outputs.append(df_out)
+
+    if return_summary:
+        outputs.append(summary)
+
+    if len(outputs) == 0:
+        raise ValueError(
+            "At least one of return_capped_var, return_capped_df, or return_summary must be True."
+        )
+
+    if len(outputs) == 1:
+        return outputs[0]
+
+    return tuple(outputs)
+
+
 def categorical_target_summary(
     df: pd.DataFrame,
     cat_var: str,
@@ -1167,7 +1312,7 @@ def transform_quantitative_binner(
     missing_label = binner["missing_label"]
     binning_type = binner["binning_type"]
 
-    binned_col = f"{quant_var}_binned_{binning_type}"
+    binned_col = f"{quant_var}_bin_{binning_type}"
 
     df_out[binned_col] = pd.cut(
         df_out[quant_var],
