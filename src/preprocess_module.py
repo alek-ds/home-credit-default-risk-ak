@@ -1371,6 +1371,47 @@ def transform_quantitative_binner(
 
 
 
+def _bin_stats_from_indices(
+    y: pd.Series,
+    bin_indices,
+    suffix: str = ""
+) -> pd.DataFrame:
+    tmp = pd.DataFrame({
+        "bin_id": pd.Series(bin_indices, index=y.index),
+        "target": y
+    })
+
+    stats = (
+        tmp.groupby("bin_id", dropna=False)
+        .agg(
+            Count=("target", "size"),
+            Event=("target", "sum")
+        )
+        .reset_index()
+    )
+
+    stats["Non-event"] = stats["Count"] - stats["Event"]
+    stats["Count (%)"] = stats["Count"] / stats["Count"].sum()
+    stats["Event rate"] = stats["Event"] / stats["Count"]
+
+    if suffix:
+        stats = stats.rename(columns={
+            "Count": f"Count{suffix}",
+            "Count (%)": f"Count (%)${suffix}".replace("$", ""),
+            "Non-event": f"Non-event{suffix}",
+            "Event": f"Event{suffix}",
+            "Event rate": f"Event rate{suffix}",
+        })
+
+    return stats
+
+
+def _compute_psi(expected_pct: pd.Series, actual_pct: pd.Series, eps: float = 1e-6) -> pd.Series:
+    p = expected_pct.fillna(0).clip(lower=eps)
+    q = actual_pct.fillna(0).clip(lower=eps)
+    return (p - q) * np.log(p / q)
+
+
 def _fit_optbin_var_core(
     df_train: pd.DataFrame,
     df_valid: pd.DataFrame,
@@ -1380,20 +1421,14 @@ def _fit_optbin_var_core(
     metric: Literal["bins", "woe"] = "bins",
     monotonic_trend: str | None = "auto",
     min_bin_size: float = 0.05,
-    special_codes=None
+    special_codes=None,
+    show_digits: int = 2
 ):
-    """
-    Fit optimal binning on train only and transform train/valid.
-
-    Returns:
-        train_transformed: pd.Series
-        valid_transformed: pd.Series
-        optb: fitted OptimalBinning object
-        bt: binning table
-    """
-
     if metric not in {"bins", "woe"}:
         raise ValueError("metric must be either 'bins' or 'woe'.")
+
+    if dtype not in {"numerical", "categorical"}:
+        raise ValueError("dtype must be either 'numerical' or 'categorical'.")
 
     optb = OptimalBinning(
         name=var,
@@ -1404,23 +1439,90 @@ def _fit_optbin_var_core(
     )
 
     optb.fit(df_train[var].values, df_train[target].values)
-    bt = optb.binning_table.build()
 
+    # Full train binning table from optbinning
+    bt = optb.binning_table.build().copy()
+
+    # Output column
     out_name = f"{var}_woe" if metric == "woe" else f"{var}_optbin_bin"
 
+    # User-facing transformed columns
     train_transformed = pd.Series(
-        optb.transform(df_train[var].values, metric=metric),
+        optb.transform(df_train[var].values, metric=metric, show_digits=show_digits),
         index=df_train.index,
         name=out_name
     )
 
     valid_transformed = pd.Series(
-        optb.transform(df_valid[var].values, metric=metric),
+        optb.transform(df_valid[var].values, metric=metric, show_digits=show_digits),
         index=df_valid.index,
         name=out_name
     )
 
-    return train_transformed, valid_transformed, optb, bt
+    # Numeric bin ids for robust merging
+    train_idx = optb.transform(df_train[var].values, metric="indices")
+    valid_idx = optb.transform(df_valid[var].values, metric="indices")
+
+    train_stats = _bin_stats_from_indices(df_train[target], train_idx, suffix="")
+    valid_stats = _bin_stats_from_indices(df_valid[target], valid_idx, suffix="_valid")
+
+    # bt usually has a final Totals row; assign bin ids to all non-total rows
+    bt_non_total = bt.iloc[:-1].copy()
+    bt_total = bt.iloc[[-1]].copy()
+
+    bt_non_total["bin_id"] = np.arange(len(bt_non_total))
+
+    # Merge train stats back onto bt to keep exact displayed Bin labels from optbinning
+    summary = bt_non_total[["bin_id", "Bin", "Count", "Count (%)", "Non-event", "Event", "Event rate", "WoE", "IV", "JS"]].copy()
+
+    # overwrite train stats from actual grouped indices to guarantee consistency
+    summary = summary.drop(columns=["Count", "Count (%)", "Non-event", "Event", "Event rate"])
+    summary = summary.merge(train_stats, on="bin_id", how="left")
+    summary = summary.merge(valid_stats, on="bin_id", how="left")
+
+    summary["PSI"] = _compute_psi(summary["Count (%)"], summary["Count (%)_valid"])
+    psi_total = summary["PSI"].sum()
+
+    summary["Variable"] = f"{var}_optbin"
+    summary["Type"] = dtype
+    summary["PSI_total"] = psi_total
+
+    # Reorder so Variable and Type are first
+    desired_cols = [
+        "Variable", "Type", "Bin",
+        "Count", "Count (%)", "Non-event", "Event", "Event rate",
+        "WoE", "IV", "JS",
+        "Count_valid", "Count (%)_valid", "Non-event_valid",
+        "Event_valid", "Event rate_valid",
+        "PSI", "PSI_total"
+    ]
+    summary = summary[[c for c in desired_cols if c in summary.columns]]
+
+    # Add totals row
+    total_row = {
+        "Variable": var,
+        "Type": dtype,
+        "Bin": "Totals",
+        "Count": df_train.shape[0],
+        "Count (%)": 1.0,
+        "Non-event": (df_train[target] == 0).sum(),
+        "Event": (df_train[target] == 1).sum(),
+        "Event rate": df_train[target].mean(),
+        "WoE": np.nan,
+        "IV": bt_total["IV"].iloc[0] if "IV" in bt_total.columns else np.nan,
+        "JS": bt_total["JS"].iloc[0] if "JS" in bt_total.columns else np.nan,
+        "Count_valid": df_valid.shape[0],
+        "Count (%)_valid": 1.0,
+        "Non-event_valid": (df_valid[target] == 0).sum(),
+        "Event_valid": (df_valid[target] == 1).sum(),
+        "Event rate_valid": df_valid[target].mean(),
+        "PSI": np.nan,
+        "PSI_total": psi_total
+    }
+
+    summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+
+    return train_transformed, valid_transformed, optb, summary
 
 
 def fit_optbin_var(
@@ -1433,20 +1535,10 @@ def fit_optbin_var(
     monotonic_trend: str | None = "auto",
     min_bin_size: float = 0.05,
     special_codes=None,
-    overwrite: bool = False
+    overwrite: bool = False,
+    show_digits: int = 2
 ):
-    """
-    Pipeline-style wrapper:
-    fit on train, transform train/valid, add new column, return updated DataFrames.
-
-    Returns:
-        df_train_out: pd.DataFrame
-        df_valid_out: pd.DataFrame
-        optb: fitted OptimalBinning object
-        bt: binning table
-    """
-
-    train_transformed, valid_transformed, optb, bt = _fit_optbin_var_core(
+    train_transformed, valid_transformed, optb, summary = _fit_optbin_var_core(
         df_train=df_train,
         df_valid=df_valid,
         var=var,
@@ -1455,7 +1547,8 @@ def fit_optbin_var(
         metric=metric,
         monotonic_trend=monotonic_trend,
         min_bin_size=min_bin_size,
-        special_codes=special_codes
+        special_codes=special_codes,
+        show_digits=show_digits
     )
 
     df_train_out = df_train.copy()
@@ -1463,7 +1556,9 @@ def fit_optbin_var(
 
     new_col = train_transformed.name
 
-    if (not overwrite) and (new_col in df_train_out.columns or new_col in df_valid_out.columns):
+    if (not overwrite) and (
+        new_col in df_train_out.columns or new_col in df_valid_out.columns
+    ):
         raise ValueError(
             f"Column '{new_col}' already exists. Set overwrite=True to replace it."
         )
@@ -1471,4 +1566,4 @@ def fit_optbin_var(
     df_train_out[new_col] = train_transformed
     df_valid_out[new_col] = valid_transformed
 
-    return df_train_out, df_valid_out, optb, bt
+    return df_train_out, df_valid_out, optb, summary
