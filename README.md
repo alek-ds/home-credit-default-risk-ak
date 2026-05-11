@@ -52,17 +52,23 @@ This project will conduct analysis and modeling of train part (with custom train
 ## Notebooks
 Notebooks contain logic behind conducted exploratory analysis and feature engineering. For each data set in this project there are number of notebooks which name starts with relevant prefix (e.g. application_train.csv -> app_...).
 - application_train.csv
-    - app_col_review_missing_analysis - quick review of columns and analysis of variables with substantial number of NAN values in 'application_train.csv'
-    - app_univariate_bivariate_app_process - analysis of application process data
-    - app_univariate_bivariate_documents_provided - analysis of documentation data
-    - app_univariate_bivariate_loan - analysis of loan data
-    - app_univariate_bivariate_bureau - analysis of credit bureau data
-    - app_univariate_bivariate_financial_material - analysis of financial and material data
-    - app_univariate_bivariate_family_demographic - analysis of familiy and demographic data
-    - app_univariate_bivariate_ext_raitings - analysis of external ratings data
-    - app_univariate_bivariate_social_surrounding - analysis of social surrounding of clients
-    - app_multivariate - multivarate analysis for application data
-    - app_preprocessing - preprocessing of application data
+    - univariate and bivariate analysis
+        - app_col_review_missing_analysis - quick review of columns and analysis of variables with substantial number of NAN values in 'application_train.csv'
+        - app_univariate_bivariate_app_process - analysis of application process data
+        - app_univariate_bivariate_documents_provided - analysis of documentation data
+        - app_univariate_bivariate_loan - analysis of loan data
+        - app_univariate_bivariate_bureau - analysis of credit bureau data
+        - app_univariate_bivariate_financial_material - analysis of financial and material data
+        - app_univariate_bivariate_family_demographic - analysis of familiy and demographic data
+        - app_univariate_bivariate_ext_raitings - analysis of external ratings data
+        - app_univariate_bivariate_social_surrounding - analysis of social surrounding of clients
+        - app_multivariate - multivarate analysis for application data
+        - app_preprocessing - preprocessing of application data
+    - preprocessing
+        - app_train_valid_split - splitting data into train and valid parts for preprocessing and modeling
+        - app_preprocessing - preprocessing of application data
+    - summary
+        - app_summary_table - summary table for application data
 - bureau.csv
     - bureau_col_review_missing_analysis
 
