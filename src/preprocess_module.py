@@ -79,68 +79,135 @@ def _build_invalid_mask(
     return mask.fillna(False)
 
 
+from typing import Optional
+import numpy as np
+import pandas as pd
+
+
 def create_imputed_quantitative_features(
-        df: pd.DataFrame,
-        value_col: str,
-        specs: dict,
-        invalid_value=None,
-        invalid_condition=None,
-        add_invalid_flag: bool = True,
-        add_clean_col: bool = True,
-        return_summary: bool = True
+    df: pd.DataFrame,
+    value_col: str,
+    specs: dict,
+    df_valid: Optional[pd.DataFrame] = None,
+    invalid_value=None,
+    invalid_condition=None,
+    add_invalid_flag: bool = True,
+    add_clean_col: bool = True,
+    return_summary: bool = True
 ):
     """
-    Create multiple imputed versions of one variable using grouped/hierarchical rules.
+    Create multiple imputed versions of one quantitative variable using grouped
+    and hierarchical rules.
+
+    The imputation statistics are learned on `df` only and then applied to:
+    - `df`
+    - `df_valid`, if provided
 
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe.
+        Training dataframe used to fit imputation statistics.
     value_col : str
         Column to impute.
     specs : dict
         Dictionary where keys are output column names and values are dicts with:
             - method: 'median' or 'mean'
             - group_levels: list of grouping-column lists
-              Example:
-                  []
-                  [['NAME_INCOME_TYPE']]
-                  [['NAME_INCOME_TYPE', 'CODE_GENDER'], ['NAME_INCOME_TYPE']]
+
+        Example
+        -------
+        {
+            "DAYS_EMPLOYED_imp_1": {
+                "method": "median",
+                "group_levels": []
+            },
+            "DAYS_EMPLOYED_imp_2": {
+                "method": "median",
+                "group_levels": [["NAME_INCOME_TYPE"]]
+            },
+            "DAYS_EMPLOYED_imp_3": {
+                "method": "median",
+                "group_levels": [["NAME_INCOME_TYPE", "CODE_GENDER"], ["NAME_INCOME_TYPE"]]
+            }
+        }
+
+    df_valid : pd.DataFrame, optional
+        Validation dataframe to transform using statistics learned on `df`.
+
     invalid_value : scalar or iterable, optional
         Exact value(s) treated as invalid.
     invalid_condition : str or callable, optional
         Broader invalid rule, e.g. '< 0', '== 365243',
         or lambda s: (s < 0) | (s == 365243)
-    add_invalid_flag : bool
+
+    add_invalid_flag : bool, default=True
         Whether to create {value_col}_invalid.
-    add_clean_col : bool
+    add_clean_col : bool, default=True
         Whether to create {value_col}_clean.
-    return_summary : bool
-        Whether to return imputation diagnostics.
+    return_summary : bool, default=True
+        Whether to return imputation diagnostics for the training dataframe.
 
     Returns
     -------
-    df_out : pd.DataFrame
-        DataFrame with added columns.
-    summary_df : pd.DataFrame, optional
-        Diagnostics for each created imputed column.
+    If df_valid is None:
+        df_out : pd.DataFrame
+        summary_df : pd.DataFrame, optional
+
+    If df_valid is provided:
+        df_out : pd.DataFrame
+        df_valid_out : pd.DataFrame
+        summary_df : pd.DataFrame, optional
+
+    Notes
+    -----
+    - Imputation is fitted on `df` only.
+    - `df_valid` is transformed using group statistics and global fallback learned from `df`.
+    - This avoids data leakage from validation into training preprocessing.
     """
 
+    if df.shape[0] == 0:
+        raise ValueError("Input dataframe `df` has no rows.")
+    if df.shape[1] == 0:
+        raise ValueError("Input dataframe `df` has no columns.")
+    if value_col not in df.columns:
+        raise KeyError(f"Column '{value_col}' not found in df.")
+
+    if df_valid is not None:
+        if df_valid.shape[1] == 0:
+            raise ValueError("Input dataframe `df_valid` has no columns.")
+        if value_col not in df_valid.columns:
+            raise KeyError(f"Column '{value_col}' not found in df_valid.")
+
     df_out = df.copy()
+    df_valid_out = df_valid.copy() if df_valid is not None else None
 
     clean_col = f"{value_col}_clean"
     invalid_flag_col = f"{value_col}_invalid"
 
-    invalid_mask = _build_invalid_mask(
+    # Build invalid masks
+    invalid_mask_train = _build_invalid_mask(
         df_out[value_col],
         invalid_value=invalid_value,
         invalid_condition=invalid_condition
     )
 
-    if add_invalid_flag:
-        df_out[invalid_flag_col] = invalid_mask.astype(int)
+    if df_valid_out is not None:
+        invalid_mask_valid = _build_invalid_mask(
+            df_valid_out[value_col],
+            invalid_value=invalid_value,
+            invalid_condition=invalid_condition
+        )
 
-    df_out[clean_col] = df_out[value_col].mask(invalid_mask, np.nan)
+    # Add invalid flag
+    if add_invalid_flag:
+        df_out[invalid_flag_col] = invalid_mask_train.astype(int)
+        if df_valid_out is not None:
+            df_valid_out[invalid_flag_col] = invalid_mask_valid.astype(int)
+
+    # Create clean column
+    df_out[clean_col] = df_out[value_col].mask(invalid_mask_train, np.nan)
+    if df_valid_out is not None:
+        df_valid_out[clean_col] = df_valid_out[value_col].mask(invalid_mask_valid, np.nan)
 
     summary_rows = []
 
@@ -152,15 +219,30 @@ def create_imputed_quantitative_features(
             raise ValueError(
                 f"Unsupported method {method!r} for {output_col}. Use 'median' or 'mean'."
             )
-        
+
+        # Start from clean values
         df_out[output_col] = df_out[clean_col].copy()
+        if df_valid_out is not None:
+            df_valid_out[output_col] = df_valid_out[clean_col].copy()
 
-        step_counts = []
-        missing_before = df_out[output_col].isna().sum()
+        step_counts_train = []
+        step_counts_valid = []
 
+        missing_before_train = df_out[output_col].isna().sum()
+        missing_before_valid = (
+            df_valid_out[output_col].isna().sum() if df_valid_out is not None else None
+        )
+
+        # Hierarchical/grouped fills learned on train only
         for step_idx, group_cols in enumerate(group_levels, start=1):
             if not group_cols:
                 continue
+
+            for group_col in group_cols:
+                if group_col not in df_out.columns:
+                    raise KeyError(f"Grouping column '{group_col}' not found in df.")
+                if df_valid_out is not None and group_col not in df_valid_out.columns:
+                    raise KeyError(f"Grouping column '{group_col}' not found in df_valid.")
 
             fill_values = (
                 df_out.groupby(group_cols, dropna=False)[clean_col]
@@ -169,46 +251,98 @@ def create_imputed_quantitative_features(
                 .reset_index()
             )
 
+            # Apply to train
             df_out = df_out.merge(fill_values, on=group_cols, how="left")
-
-            na_before_step = df_out[output_col].isna()
+            na_before_step_train = df_out[output_col].isna()
             df_out[output_col] = df_out[output_col].fillna(df_out["_fill_value"])
-            filled_now = na_before_step.sum() - df_out[output_col].isna().sum()
+            filled_now_train = na_before_step_train.sum() - df_out[output_col].isna().sum()
 
-            step_counts.append({
+            step_counts_train.append({
+                "dataset": "train",
                 "output_col": output_col,
                 "step": step_idx,
                 "group_level": tuple(group_cols),
-                "filled_count": int(filled_now),
+                "filled_count": int(filled_now_train),
             })
 
-            df_out = df_out.drop(columns="_fill_value")
+            df_out = df_out.drop(columns=["_fill_value"])
 
+            # Apply same learned fill values to valid
+            if df_valid_out is not None:
+                df_valid_out = df_valid_out.merge(fill_values, on=group_cols, how="left")
+                na_before_step_valid = df_valid_out[output_col].isna()
+                df_valid_out[output_col] = df_valid_out[output_col].fillna(df_valid_out["_fill_value"])
+                filled_now_valid = (
+                    na_before_step_valid.sum() - df_valid_out[output_col].isna().sum()
+                )
+
+                step_counts_valid.append({
+                    "dataset": "valid",
+                    "output_col": output_col,
+                    "step": step_idx,
+                    "group_level": tuple(group_cols),
+                    "filled_count": int(filled_now_valid),
+                })
+
+                df_valid_out = df_valid_out.drop(columns=["_fill_value"])
+
+        # Global fallback learned on train only
         global_fill = getattr(df_out[clean_col], method)()
-        na_before_global = df_out[output_col].isna().sum()
+
+        na_before_global_train = df_out[output_col].isna().sum()
         df_out[output_col] = df_out[output_col].fillna(global_fill)
-        global_filled = na_before_global - df_out[output_col].isna().sum()
+        global_filled_train = na_before_global_train - df_out[output_col].isna().sum()
+
+        if df_valid_out is not None:
+            na_before_global_valid = df_valid_out[output_col].isna().sum()
+            df_valid_out[output_col] = df_valid_out[output_col].fillna(global_fill)
+            global_filled_valid = (
+                na_before_global_valid - df_valid_out[output_col].isna().sum()
+            )
 
         summary_rows.append({
+            "dataset": "train",
             "output_col": output_col,
             "method": method,
-            "n_invalid": int(invalid_mask.sum()),
-            "missing_before_imputation": int(missing_before),
-            "filled_by_hierarchy": int(sum(row["filled_count"] for row in step_counts)),
-            "filled_by_global": int(global_filled),
+            "n_invalid": int(invalid_mask_train.sum()),
+            "missing_before_imputation": int(missing_before_train),
+            "filled_by_hierarchy": int(sum(row["filled_count"] for row in step_counts_train)),
+            "filled_by_global": int(global_filled_train),
             "missing_after_imputation": int(df_out[output_col].isna().sum()),
             "group_levels": str(group_levels),
         })
 
-        summary_rows.extend(step_counts)
+        summary_rows.extend(step_counts_train)
+
+        if df_valid_out is not None:
+            summary_rows.append({
+                "dataset": "valid",
+                "output_col": output_col,
+                "method": method,
+                "n_invalid": int(invalid_mask_valid.sum()),
+                "missing_before_imputation": int(missing_before_valid),
+                "filled_by_hierarchy": int(sum(row["filled_count"] for row in step_counts_valid)),
+                "filled_by_global": int(global_filled_valid),
+                "missing_after_imputation": int(df_valid_out[output_col].isna().sum()),
+                "group_levels": str(group_levels),
+            })
+
+            summary_rows.extend(step_counts_valid)
 
     if not add_clean_col:
-        df_out = df_out.drop(columns=clean_col)
+        df_out = df_out.drop(columns=[clean_col])
+        if df_valid_out is not None:
+            df_valid_out = df_valid_out.drop(columns=[clean_col])
 
     summary_df = pd.DataFrame(summary_rows)
 
     if return_summary:
+        if df_valid_out is not None:
+            return df_out, df_valid_out, summary_df
         return df_out, summary_df
+
+    if df_valid_out is not None:
+        return df_out, df_valid_out
     return df_out
 
 
