@@ -67,6 +67,7 @@ Notebooks contain logic behind conducted exploratory analysis and feature engine
     - preprocessing
         - app_train_valid_split - splitting data into train and valid parts for preprocessing and modeling
         - app_preprocessing - preprocessing of application data
+        - app_preprocessing_logistic_reg - preprocessing for baseline logistic regression
     - summary
         - app_summary_table - summary table for application data
 - bureau.csv
